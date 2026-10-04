@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# A broken link is fixed at its source, never tolerated: there is no allowlist.
+total=0
+broken=0
+generated=0
+
+# Build a set of paths that are generated at MkDocs build time (docs/_hooks/gen_*.py).
+# These files don't exist on disk but resolve at build time via the mkdocs-gen-files
+# plugin. Link targets pointing to these paths are intentional; MkDocs strict build
+# validates them end-to-end via scripts/docs-build.sh --check.
+declare -A generated_paths
+# CLI reference pages (from docs/_hooks/gen_cli_reference.py)
+generated_paths["$REPO_ROOT/docs/cli/index.md"]=1
+generated_paths["$REPO_ROOT/docs/cli/commands.md"]=1
+generated_paths["$REPO_ROOT/docs/cli/hooks.md"]=1
+# Skill catalog + index (from docs/_hooks/gen_skill_pages.py)
+generated_paths["$REPO_ROOT/docs/skills/index.md"]=1
+generated_paths["$REPO_ROOT/docs/skills/catalog.md"]=1
+# Individual skill pages — one per directory under skills/
+if [[ -d "$REPO_ROOT/skills" ]]; then
+  while IFS= read -r skill_dir; do
+    [[ -z "$skill_dir" ]] && continue
+    slug="$(basename "$skill_dir")"
+    generated_paths["$REPO_ROOT/docs/skills/${slug}.md"]=1
+  done < <(find "$REPO_ROOT/skills" -mindepth 1 -maxdepth 1 -type d)
+fi
+
+# Validate the public root, the published MkDocs nav, and every live skill
+# package. Historical and off-nav research remains readable evidence but is not
+# a maintained public link surface.
+md_files=()
+for name in README.md PRODUCT.md GOALS.md PROGRAM.md AGENTS.md \
+  docs/contracts/multi-runtime-tier-charter.md docs/install-day2-ops.md .opencode/INSTALL.md; do
+  [[ -f "$REPO_ROOT/$name" ]] && md_files+=("$REPO_ROOT/$name")
+done
+
+while IFS= read -r rel; do
+  [[ -n "$rel" && -f "$REPO_ROOT/docs/$rel" ]] && md_files+=("$REPO_ROOT/docs/$rel")
+done < <(sed -nE 's/^[[:space:]]*-[[:space:]]+([^:]+:[[:space:]]+)?"?([^"[:space:]]+\.md)"?[[:space:]]*$/\2/p' "$REPO_ROOT/mkdocs.yml" | sort -u)
+
+if [[ -d "$REPO_ROOT/skills" ]]; then
+  while IFS= read -r f; do
+    md_files+=("$f")
+  done < <(find "$REPO_ROOT/skills" -name '*.md' -type f -not -path '*/.agents/*')
+fi
+
+for file in "${md_files[@]}"; do
+  rel_file="${file#"$REPO_ROOT"/}"
+  file_dir="$(dirname "$file")"
+
+  # Extract live markdown links while skipping fenced code blocks and inline code.
+  while IFS= read -r match; do
+    [[ -z "$match" ]] && continue
+    line_num="${match%%:*}"
+    target="${match#*:}"
+
+    # Skip external URLs
+    [[ "$target" == http://* || "$target" == https://* ]] && continue
+    # Skip anchor-only links
+    [[ "$target" == \#* ]] && continue
+    # Skip mailto links
+    [[ "$target" == mailto:* ]] && continue
+    # Skip empty
+    [[ -z "$target" ]] && continue
+
+    # Strip anchor fragment
+    target_path="${target%%#*}"
+    [[ -z "$target_path" ]] && continue
+
+    # Strip trailing whitespace and quotes (image title syntax)
+    target_path="${target_path%% *}"
+
+    total=$((total + 1))
+
+    # Resolve path relative to the linking file's directory
+    if [[ "$target_path" == /* ]]; then
+      resolved="$target_path"
+    else
+      resolved="$file_dir/$target_path"
+    fi
+
+    if [[ ! -e "$resolved" ]]; then
+      # Normalize the resolved path so generated-path lookups line up.
+      # The mkdocs-generated paths have no on-disk parent dir in CI (docs/skills/
+      # and docs/cli/ exist only via gen-files plugin). Fall back to the raw
+      # resolved path when the parent dir does not exist — do NOT use inline
+      # short-circuit `|| canonical=...` because that never fires when the
+      # outer assignment itself does not fail.
+      canonical="$(python3 - "$resolved" <<'PY'
+import os
+import sys
+print(os.path.normpath(sys.argv[1]))
+PY
+)"
+      if [[ -n "${generated_paths[$canonical]+x}" ]]; then
+        generated=$((generated + 1))
+        continue
+      fi
+      broken=$((broken + 1))
+      echo "BROKEN: $rel_file:$line_num -> $target_path"
+    fi
+  done < <(
+    awk '
+      BEGIN { in_fence = 0 }
+      /^```/ {
+        in_fence = !in_fence
+        next
+      }
+      in_fence { next }
+      {
+        line = $0
+        while (match(line, /`[^`]*`/)) {
+          line = substr(line, 1, RSTART - 1) substr(line, RSTART + RLENGTH)
+        }
+        while (match(line, /\]\([^)]+\)/)) {
+          target = substr(line, RSTART + 2, RLENGTH - 3)
+          print NR ":" target
+          line = substr(line, RSTART + RLENGTH)
+        }
+      }
+    ' "$file"
+  )
+done
+
+echo ""
+echo "$total links checked, $broken broken ($generated mkdocs-generated)"
+
+if [[ "$broken" -gt 0 ]]; then
+  exit 1
+fi
+
+exit 0

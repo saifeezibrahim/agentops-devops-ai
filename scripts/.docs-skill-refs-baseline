@@ -1,0 +1,30 @@
+# scripts/.docs-skill-refs-baseline — filename-pinned shrink baseline for
+# `check-doc-skill-refs.sh` (age-gate-the-ungated-egwt.5).
+#
+# Each line is a LIVE docs/** path that currently carries a dead `/skill`
+# reference (a backtick-slash citation or slash-command heading that does not
+# resolve to an existing skills/<dir>). The gate treats these as GRANDFATHERED:
+# they are allowed to offend, but the list only shrinks.
+#
+# The ratchet is two-way:
+#   - A NON-baselined live doc that acquires a dead skill ref  -> FAIL (fix it).
+#   - A baselined file that no longer offends                  -> FAIL (PRUNE it
+#     from this list to lock the gain).
+#
+# To burn one down: repoint the `/skill` at its live successor, then delete the
+# file's line here.
+#
+# dyr0-owned / owner-locked pages (docs/getting-started/**, docs/comparisons/**,
+# receipts/proof pages, README/PRODUCT/GOALS) stay baselined if they offend —
+# do NOT edit those to burn them down.
+#
+# Comments (#...) and blank lines are ignored. Keep this list sorted.
+docs/CHANGELOG.md
+docs/contracts/codex-skill-api.md
+docs/domain-practice-packets.md
+docs/evals/age-9a9-corpus-free-sandbox-isolation.md
+docs/profiles/COMPARISON.md
+docs/runbooks/path-rationalization.md
+docs/standards/olympus-engineering-standards.md
+docs/standards/README.md
+docs/templates/command.template.md

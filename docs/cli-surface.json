@@ -1,0 +1,490 @@
+{
+  "categories": [
+    "public-tested",
+    "public-stateful-fixture-needed",
+    "internal-hidden",
+    "deprecated",
+    "unsafe-live",
+    "manual-only"
+  ],
+  "commands": [
+    {
+      "category": "public-tested",
+      "command": "capabilities",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by capability contract tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "completion",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Framework completion root has focused generation tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "config context",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "manual-only",
+      "command": "demo",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Interactive demonstration requires a TTY."
+    },
+    {
+      "category": "public-stateful-fixture-needed",
+      "command": "doctor capabilities",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Inspects local installation state."
+    },
+    {
+      "category": "public-stateful-fixture-needed",
+      "command": "doctor diff",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Compares local installation state."
+    },
+    {
+      "category": "public-stateful-fixture-needed",
+      "command": "doctor explain",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Requires controlled findings."
+    },
+    {
+      "category": "public-stateful-fixture-needed",
+      "command": "doctor fix",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Mutates local installation state."
+    },
+    {
+      "category": "public-stateful-fixture-needed",
+      "command": "doctor gc",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Prunes local doctor artifacts."
+    },
+    {
+      "category": "public-stateful-fixture-needed",
+      "command": "doctor health",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Inspects local health state."
+    },
+    {
+      "category": "public-stateful-fixture-needed",
+      "command": "doctor ls",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Lists local doctor artifacts."
+    },
+    {
+      "category": "public-stateful-fixture-needed",
+      "command": "doctor robot-docs",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Generates docs from local installation state."
+    },
+    {
+      "category": "public-stateful-fixture-needed",
+      "command": "doctor undo",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Reverts a doctor repair fixture."
+    },
+    {
+      "category": "public-tested",
+      "command": "gate check",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "gc check",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "gc prepare",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "gc recover-affinity",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-stateful-fixture-needed",
+      "command": "goals drift",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Requires two goal snapshots."
+    },
+    {
+      "category": "public-tested",
+      "command": "goals export",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered through goals snapshot behavior."
+    },
+    {
+      "category": "public-tested",
+      "command": "goals history",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Historical view shares goals validation behavior."
+    },
+    {
+      "category": "public-tested",
+      "command": "goals measure",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "goals meta",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered through goals measurement behavior."
+    },
+    {
+      "category": "public-tested",
+      "command": "goals render",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/goals render tests after the goals carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "goals scenarios",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/goals module tests and internal/goals scenario tests after the goals carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "goals validate",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/goals module tests and internal/goals validate tests after the goals carve-out."
+    },
+    {
+      "category": "internal-hidden",
+      "command": "help",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Built-in Cobra help dispatcher with no application handler."
+    },
+    {
+      "category": "public-tested",
+      "command": "init",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/init module tests and internal/initapp tests after the init carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance add",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/provenance module tests after the provenance carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance check-okf",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance digest",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance evidence-orphans",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance export",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/provenance module tests after the provenance carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance list",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/provenance module tests after the provenance carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance manifest",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance mine-session",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/provenanceapp mine-session tests after the provenance carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance position",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/provenance module tests after the provenance carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance show",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/provenance module tests after the provenance carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance snapshot-intent",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance store-verdict",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance trace",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/provenance module tests after the provenance carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance verify",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/provenance module tests after the provenance carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance verify-judgments",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance verify-manifest",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance verify-subject",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "provenance verify-verdict",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "quick-start",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "robot-docs",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by generated documentation tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "session bootstrap",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "session handoff",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by handoff artifact tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "session prune-agents",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "session read-source",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "session rehydrate",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by rehydrate artifact tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "skills audit",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "skills build",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "skills check",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/skills module tests after the skills carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "skills check-source",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "skills consumers",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/skills module tests after the skills carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "skills find",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/skills module tests after the skills carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "skills graph",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/skills module tests after the skills carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "skills link",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/skills help tests plus internal/skillsapp link tests after the skills carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "skills list",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/skills module tests after the skills carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "skills producers",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/skills module tests after the skills carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "skills resolve",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/skills module tests after the skills carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "skills unlink",
+      "coverage_status": "allowlisted",
+      "kind": "leaf",
+      "reason": "Covered by internal/commands/skills help tests plus internal/skillsapp unlink tests after the skills carve-out."
+    },
+    {
+      "category": "public-tested",
+      "command": "status",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "version",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "workflows link",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    },
+    {
+      "category": "public-tested",
+      "command": "workflows unlink",
+      "coverage_status": "covered",
+      "kind": "leaf",
+      "reason": "Covered by release smoke tests, direct command tests, or command handler tests."
+    }
+  ],
+  "generated_by": "scripts/check-cmdao-surface-parity.sh --write-surface",
+  "schema_version": 1
+}

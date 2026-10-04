@@ -1,0 +1,43 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - copyloopvar
+    - errcheck
+    - errorlint
+    - gocyclo
+    - govet
+    - misspell
+    - staticcheck
+    - unused
+    - usestdlibvars
+    # Deferred to their fix beads (enabling whole-tree today surfaces a backlog
+    # and/or findings in deprecated files we don't touch):
+    #   - unconvert  -> agentops-0l9 (rpi_c2_events.go is deprecated; needs path exclusion)
+    # NOTE on agentops-tqc.3 (swallowed json.Marshal/Unmarshal): errcheck here
+    # does NOT catch the blank-discard swallow (`b, _ := json.Marshal(...)`)
+    # because check-blank is off (and turning it on globally would flood
+    # unrelated `_, _ :=` discards). The scoped enforcement lives in
+    # scripts/check-json-marshal-checked.sh (errcheck -blank filtered to the
+    # conventional `json.` selector), wired blocking into validate.yml.
+  settings:
+    gocyclo:
+      min-complexity: 25
+    errcheck:
+      # Don't check return values of fmt.Fprint*/fmt.Fprintln (stdout writes)
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Writer).Write
+  exclusions:
+    paths:
+      - ../tests/fixtures
+    rules:
+      # Test files: defer cleanup and env manipulation don't need error checks;
+      # test functions naturally have high cyclomatic complexity from subtests.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gocyclo

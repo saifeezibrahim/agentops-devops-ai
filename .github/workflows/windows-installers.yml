@@ -1,0 +1,43 @@
+# Windows onboarding leg: exercise scripts/install-ao.ps1 on windows-latest,
+# then the contributor `ao skills link` path via tests/windows/test-windows-smoke.ps1.
+
+name: windows-installers
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '45 9 * * *'
+  pull_request:
+    paths:
+      - 'scripts/install-ao.ps1'
+      - 'tests/windows/test-windows-smoke.ps1'
+      - '.github/workflows/windows-installers.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installers:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@REDACTED # v7
+
+      - name: Install ao CLI release binary (sandboxed install dir)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $sandboxInstall = Join-Path $env:RUNNER_TEMP "ao-install"
+          New-Item -ItemType Directory -Force -Path $sandboxInstall | Out-Null
+          & "$env:GITHUB_WORKSPACE\scripts\install-ao.ps1" `
+            -InstallDir $sandboxInstall `
+            -NoPathUpdate
+          & (Join-Path $sandboxInstall 'ao.exe') version
+
+      - name: Run Windows smoke (ao install + skills link + doctor guidance)
+        run: |
+          & "$env:GITHUB_WORKSPACE\tests\windows\test-windows-smoke.ps1" `
+            -RepoRoot $env:GITHUB_WORKSPACE

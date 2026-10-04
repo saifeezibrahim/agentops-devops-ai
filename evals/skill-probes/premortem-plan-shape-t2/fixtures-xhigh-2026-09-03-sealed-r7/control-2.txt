@@ -1,0 +1,5 @@
+{"arm":"control","network_egress":{"allowed":47,"log_sha256":"sha256:REDACTED","refused":0},"position":4,"prompt":{"content_base64":"REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED==","path":"control.prompt","sha256":"sha256:REDACTED"},"rep":2,"type":"agentops.probe-input.v1","workspace":"/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T/probe-run.4F7rsb/ws","workspace_reset":true}
+{"thread_id":"REDACTED","type":"thread.started"}
+{"type":"turn.started"}
+{"item":{"id":"item_0","text":"S1: OK\nS2: FINDING\nS3: FINDING\nS4: FINDING\nS5: FINDING\nS6: FINDING\nS7: FINDING\nS8: FINDING","type":"agent_message"},"type":"item.completed"}
+{"type":"turn.completed","usage":{"cache_write_input_tokens":0,"cached_input_tokens":6912,"input_tokens":10377,"output_tokens":891,"reasoning_output_tokens":839}}

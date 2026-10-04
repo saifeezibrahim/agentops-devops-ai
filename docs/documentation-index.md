@@ -1,0 +1,48 @@
+# Documentation index
+
+This index is generated from live files by `scripts/generate-documentation-index.py`.
+Dated plans, audits, releases, and archive material are historical evidence, not current authority.
+
+## Product and workflow
+
+- [README](https://github.com/boshu2/agentops/blob/main/README.md)
+- [Product boundary](https://github.com/boshu2/agentops/blob/main/PRODUCT.md)
+- [Fitness goals](https://github.com/boshu2/agentops/blob/main/GOALS.md)
+- [Program boundary](https://github.com/boshu2/agentops/blob/main/PROGRAM.md)
+- [RPI traversal](architecture/rpi-traversal.md)
+- [Gas City reliability boundary](operations/gas-city-reliability.md)
+- [Agent workflow](agent-workflow-reference.md)
+- [Repository CI and delivery](CI-CD.md)
+- [Component map](architecture/component-map.md)
+- [Ports and adapters](architecture/ports-and-adapters.md)
+- [Skill router](SKILL-ROUTER.md)
+- [Skill graph](reference/agentops-skill-graph.md)
+
+## Contracts
+
+- [Bounded Contexts](contracts/bounded-contexts.yaml)
+- [Ci Jobs](contracts/ci-jobs.yaml)
+- [Codex Skill API Contract](contracts/codex-skill-api.md)
+- [AgentOps context map](contracts/context-map.md)
+- [Corpus learning seam — the field-level public/private boundary](contracts/corpus-learning-seam.md)
+- [Critical Skills](contracts/critical-skills.txt)
+- [Finding Artifact.Schema](contracts/finding-artifact.schema.json)
+- [Finding Compiler Contract](contracts/finding-compiler.md)
+- [Finding Registry Contract](contracts/finding-registry.md)
+- [Finding Registry.Schema](contracts/finding-registry.schema.json)
+- [GC 3.3 migration provenance](contracts/gc33-migration-provenance.md)
+- [Contracts](contracts/index.md)
+- [Optional Lesson Format](contracts/lesson-format.md)
+- [Superseded Historical ADR: Local Push-Gate Experiments](contracts/local-pre-push-gate-retirement.md)
+- [Multi-runtime tier charter](contracts/multi-runtime-tier-charter.md)
+- [Optional dispatch adapter](contracts/orchestration-ports.md)
+- [Contract: PMF Evidence Gate](contracts/pmf-evidence.md)
+- [Producer-Defect Recurrence Contract](contracts/producer-defect-register.md)
+- [Generated skill projections](contracts/registry-as-derived.md)
+- [Release Notes Contract](contracts/release-notes.md)
+- [Runtime Neutrality Contract](contracts/runtime-neutrality.md)
+- [Scenario → Test Linkage Contract](contracts/scenario-test-linkage.md)
+- [Scope Escape Report Template](contracts/scope-escape-report.md)
+- [Skill system architecture](contracts/skill-ports-and-adapters.md)
+- [Ubiquitous language](contracts/ubiquitous-language.md)
+- [Update Principles Contract](contracts/update-principles.md)

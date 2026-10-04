@@ -1,0 +1,11 @@
+scope = "city"
+provider = "claude"
+session = "tmux"
+wake_mode = "fresh"
+# No lifecycle override: the named session is an on-demand human/agent door.
+# Gas City 1.4's store-scoped control dispatcher propels formula graphs, so this
+# session consumes no standing seat and wakes only for explicit dispatch/status.
+# Fresh wake mode makes every request derive state from Gas City and Beads.
+work_dir = ".gc/agents/mayor"
+option_defaults = { permission_mode = "unrestricted", model = "fable-5", effort = "adaptive" }
+inject_assigned_skills = true

@@ -1,0 +1,160 @@
+package quality
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestComputeResult_Healthy(t *testing.T) {
+	t.Parallel()
+	out := ComputeResult([]Check{{Name: "a", Status: "pass", Required: true}, {Name: "b", Status: "pass"}})
+	if out.Result != "HEALTHY" {
+		t.Errorf("Result = %q, want HEALTHY", out.Result)
+	}
+}
+
+func TestCodexNativePluginRootPathFindsVersionedCacheWhenLocalIsAbsent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	versioned := filepath.Join(home, ".codex", "plugins", "cache",
+		CodexAgentOpsMarketplaceName, CodexAgentOpsPluginName, "3.2.0")
+	if err := os.MkdirAll(filepath.Join(versioned, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Stale metadata from the former local-cache layout must not hide the live
+	// versioned plugin.
+	if err := os.MkdirAll(filepath.Dir(CodexInstallMetaPath(home)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(CodexInstallMetaPath(home), []byte(`{"plugin_root":"`+
+		filepath.Join(home, ".codex", "plugins", "cache", CodexAgentOpsMarketplaceName,
+			CodexAgentOpsPluginName, "local")+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := CodexNativePluginRootPath(home); got != versioned {
+		t.Fatalf("CodexNativePluginRootPath() = %q, want live versioned root %q", got, versioned)
+	}
+}
+
+func TestHealStrictTimeout_DefaultsTo120s(t *testing.T) {
+	t.Setenv("AO_DOCTOR_HEAL_TIMEOUT", "")
+	got := healStrictTimeout()
+	if got != 120*time.Second {
+		t.Errorf("healStrictTimeout() default = %s, want 2m0s", got)
+	}
+}
+
+func TestHealStrictTimeout_HonorsEnvOverride(t *testing.T) {
+	t.Setenv("AO_DOCTOR_HEAL_TIMEOUT", "3m")
+	got := healStrictTimeout()
+	if got != 3*time.Minute {
+		t.Errorf("healStrictTimeout() with AO_DOCTOR_HEAL_TIMEOUT=3m = %s, want 3m0s", got)
+	}
+}
+
+func TestHealStrictTimeout_IgnoresInvalidOverride(t *testing.T) {
+	// Garbage values fall back to the default so doctor never runs with a
+	// zero-length timeout and instantly times out every check.
+	for _, bad := range []string{"not-a-duration", "0", "-5s", "   "} {
+		t.Setenv("AO_DOCTOR_HEAL_TIMEOUT", bad)
+		got := healStrictTimeout()
+		if got != 120*time.Second {
+			t.Errorf("healStrictTimeout() with AO_DOCTOR_HEAL_TIMEOUT=%q = %s, want 2m0s", bad, got)
+		}
+	}
+}
+
+func TestComputeResult_Degraded(t *testing.T) {
+	t.Parallel()
+	out := ComputeResult([]Check{{Status: "pass"}, {Status: "warn"}})
+	if out.Result != "DEGRADED" {
+		t.Errorf("Result = %q, want DEGRADED", out.Result)
+	}
+}
+
+func TestComputeResult_Unhealthy(t *testing.T) {
+	t.Parallel()
+	out := ComputeResult([]Check{{Status: "fail", Required: true}})
+	if out.Result != "UNHEALTHY" {
+		t.Errorf("Result = %q, want UNHEALTHY", out.Result)
+	}
+}
+
+func TestHasRequiredFailure(t *testing.T) {
+	t.Parallel()
+	if HasRequiredFailure([]Check{{Status: "pass", Required: true}}) {
+		t.Error("should not fail for passing required")
+	}
+	if HasRequiredFailure([]Check{{Status: "fail", Required: false}}) {
+		t.Error("should not fail for optional failure")
+	}
+	if !HasRequiredFailure([]Check{{Status: "fail", Required: true}}) {
+		t.Error("should fail for required failure")
+	}
+}
+
+func TestStatusIcon(t *testing.T) {
+	t.Parallel()
+	if StatusIcon("pass") != "\u2713" {
+		t.Error("pass icon wrong")
+	}
+	if StatusIcon("fail") != "\u2717" {
+		t.Error("fail icon wrong")
+	}
+	if StatusIcon("warn") != "!" {
+		t.Error("warn icon wrong")
+	}
+}
+
+func TestFormatVersion(t *testing.T) {
+	t.Parallel()
+	if FormatVersion("1.0") != "v1.0" {
+		t.Error("missing v prefix")
+	}
+	if FormatVersion("v1.0") != "v1.0" {
+		t.Error("double v prefix")
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{30 * time.Second, "30s"},
+		{5 * time.Minute, "5m"},
+		{3 * time.Hour, "3h"},
+		{48 * time.Hour, "2d"},
+	}
+	for _, tt := range tests {
+		if got := FormatDuration(tt.d); got != tt.want {
+			t.Errorf("FormatDuration(%v) = %q, want %q", tt.d, got, tt.want)
+		}
+	}
+}
+
+func TestRunDoctor_JSON(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	err := RunDoctor(DoctorOptions{JSON: true, Checks: []Check{{Name: "test", Status: "pass", Required: true}}, Stdout: &buf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("HEALTHY")) {
+		t.Error("expected HEALTHY in JSON")
+	}
+}
+
+func TestRunDoctor_FailsOnRequired(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	err := RunDoctor(DoctorOptions{Checks: []Check{{Name: "broken", Status: "fail", Required: true}}, Stdout: &buf})
+	if err == nil {
+		t.Error("expected error")
+	}
+}

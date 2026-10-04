@@ -1,0 +1,57 @@
+# MkDocs strict-build dispositioned warnings (age-y0ww)
+#
+# Each line below is an EXACT mkdocs --strict WARNING that scripts/docs-build.sh
+# --check tolerates because it is an INTENTIONAL cross-reference from a docs/ page
+# to a real repo artifact that lives OUTSIDE the published site (docs_dir). These
+# links resolve for repo/GitHub readers; mkdocs cannot resolve them because the
+# target is not part of the built site.
+#
+# Policy consistency: mkdocs.yml declares `strict: false` for the PUBLISHED build
+# (docs deliberately link outside docs_dir); tests/docs/validate-links.sh owns
+# link checking for the doc-release checks. `scripts/docs-build.sh --check` is the
+# deliberate strict BACKSTOP on top of that: strict mode with this curated
+# allowlist, so new/accidental broken links still fail while the accepted
+# out-of-tree cross-references pass.
+#
+# Format: the verbatim `WARNING -  ...` line mkdocs emits (whole-line, exact match).
+# The check FAILS on any strict warning NOT listed here, so NEW/accidental broken
+# links still break the build — this is a baseline, not a blanket suppression.
+# Add a line here ONLY after confirming the target is a real repo artifact that is
+# deliberately outside the docs site; prefer FIXING the link when a docs-site target
+# exists. NEVER allowlist a link whose target exists nowhere in the repo — that is
+# a dead link to fix at the source. Blank lines and '#' lines are ignored.
+#
+# Refreshed 2026-07-20: the previous 53 entries all referenced source docs deleted
+# in the Cathedral Cut and could no longer fire; replaced with the verified
+# accepted-class warnings the current tree emits.
+#
+# Regenerate/refresh after an intentional doc move:
+#   scripts/docs-build.sh --check   # prints any un-dispositioned warning verbatim
+
+WARNING -  Doc file 'CI-CD.md' contains a link '../AGENTS.md', but the target is not found among documentation files.
+WARNING -  Doc file 'agent-workflow-reference.md' contains a link '../AGENTS.md', but the target is not found among documentation files.
+WARNING -  Doc file 'dependencies.md' contains a link '../README.md', but the target is not found among documentation files.
+WARNING -  Doc file 'seed-definition.md' contains a link '../PRODUCT.md', but the target is not found among documentation files.
+WARNING -  Doc file 'trust-factory.md' contains a link '../PRODUCT.md', but the target is not found among documentation files.
+WARNING -  Doc file 'wiki-for-agents.md' contains a link '../PRODUCT.md', but the target is not found among documentation files.
+WARNING -  Doc file 'contracts/codex-skill-api.md' contains a link '../../AGENTS.md', but the target '../AGENTS.md' is not found among documentation files.
+WARNING -  Doc file 'releases/2026-07-17-v3.3.0-notes.md' contains a link '../../CHANGELOG.md', but the target '../CHANGELOG.md' is not found among documentation files. Did you mean '../CHANGELOG.md'?
+
+# Verified 2026-09-10: these links deliberately cite canonical source contracts
+# and the strict-build policy outside docs/, rather than generated site pages.
+# Every target is an existing repository file; retired documents are labeled
+# as historical text at their source and are not allowlisted.
+WARNING -  Doc file 'agent-workflow-reference.md' contains a link '../skills/memory/SKILL.md', but the target is not found among documentation files.
+WARNING -  Doc file 'agent-workflow-reference.md' contains a link '../skills/rpi/SKILL.md', but the target is not found among documentation files.
+WARNING -  Doc file 'agent-workflow-reference.md' contains a link '../skills/validate/references/mechanics.md', but the target is not found among documentation files.
+WARNING -  Doc file 'how-it-works.md' contains a link '../skills/rpi/SKILL.md', but the target is not found among documentation files.
+WARNING -  Doc file 'adr/ADR-0016-state-tiers.md' contains a link '../../skills/validate/references/mechanics.md', but the target '../skills/validate/references/mechanics.md' is not found among documentation files.
+WARNING -  Doc file 'adr/REDACTED.md' contains a link '../../skills/agent-native/references/model-dispatch.md', but the target '../skills/agent-native/references/model-dispatch.md' is not found among documentation files.
+WARNING -  Doc file 'architecture/hexagon-port-realness-audit.md' contains a link '../../AGENTS.md', but the target '../AGENTS.md' is not found among documentation files.
+WARNING -  Doc file 'architecture/rpi-traversal.md' contains a link '../../skills/rpi/SKILL.md', but the target '../skills/rpi/SKILL.md' is not found among documentation files.
+WARNING -  Doc file 'architecture/rpi-traversal.md' contains a link '../../skills/agent-native/references/model-dispatch.md', but the target '../skills/agent-native/references/model-dispatch.md' is not found among documentation files.
+WARNING -  Doc file 'architecture/rpi-traversal.md' contains a link '../../skills/rpi/references/outer-goal.md', but the target '../skills/rpi/references/outer-goal.md' is not found among documentation files.
+WARNING -  Doc file 'architecture/rpi-traversal.md' contains a link '../../skills/memory/SKILL.md', but the target '../skills/memory/SKILL.md' is not found among documentation files.
+WARNING -  Doc file 'reference/skill-system-evolution.md' contains a link '../../skills/rpi/SKILL.md', but the target '../skills/rpi/SKILL.md' is not found among documentation files.
+WARNING -  Doc file 'releases/2026-07-30-v3.4.0-notes.md' contains a link '../../skills/using-gc/SKILL.md', but the target '../skills/using-gc/SKILL.md' is not found among documentation files.
+WARNING -  Doc file 'CONTRIBUTING.md' contains a link '../tests/docs/mkdocs-strict-allowlist.txt', but the target is not found among documentation files.

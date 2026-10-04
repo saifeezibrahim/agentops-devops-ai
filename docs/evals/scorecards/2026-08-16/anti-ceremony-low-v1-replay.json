@@ -1,0 +1,68 @@
+{
+  "schema": "agentops-skill-probe.v2",
+  "probe": "anti-ceremony-creation-gate",
+  "skill": "operationalize",
+  "mode": "replay",
+  "generated_at": "2026-08-16T13:23:42Z",
+  "reps": 2,
+  "producer": {
+    "adapter": "codex",
+    "model": "gpt-5.6-luna",
+    "effort": "low"
+  },
+  "requested_producer": {
+    "model": "gpt-5.6-luna",
+    "effort": "low"
+  },
+  "fixture_set": {
+    "name": "fixtures-low-2026-08-16",
+    "metadata": "fixture-set.json",
+    "binding_sha256": "sha256:REDACTED"
+  },
+  "treatment_source": "injected-prelude",
+  "evaluator": {
+    "harness": {
+      "path": "scripts/probe-skill.sh",
+      "sha256": "sha256:REDACTED"
+    },
+    "metadata_helper": {
+      "path": "scripts/lib/probe-fixture-metadata.py",
+      "sha256": "sha256:REDACTED"
+    }
+  },
+  "capture_evaluator": {
+    "harness": {
+      "path": "scripts/probe-skill.sh",
+      "sha256": "sha256:REDACTED"
+    },
+    "metadata_helper": {
+      "path": "scripts/lib/probe-fixture-metadata.py",
+      "sha256": "sha256:REDACTED"
+    }
+  },
+  "evaluator_matches_capture": false,
+  "honesty": "measures response-shape BEHAVIOR-CHANGE under the exact hash-bound injected prelude named by bound probe metadata; canonical SKILL.md is not bound; this is NOT full-skill activation or quality-uplift; small N is directional (ADR-0011)",
+  "control": {
+    "present": 2,
+    "usable": 2,
+    "rate": 1.0
+  },
+  "treatment": {
+    "present": 2,
+    "usable": 2,
+    "rate": 1.0
+  },
+  "verdict": "INERT",
+  "per_rep": [
+    {
+      "rep": 1,
+      "control": "PRESENT",
+      "treatment": "PRESENT"
+    },
+    {
+      "rep": 2,
+      "control": "PRESENT",
+      "treatment": "PRESENT"
+    }
+  ]
+}

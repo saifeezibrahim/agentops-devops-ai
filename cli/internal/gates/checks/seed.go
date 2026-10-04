@@ -1,0 +1,503 @@
+// Package checks holds the gate check definitions registered into
+// gates.Default. Two registration shapes coexist deliberately:
+//
+//   - script-backed checks are declared together in seed.go's init() — one
+//     table entry per check (ID, tiers, match globs, backing scripts/*.sh);
+//   - native Go checks register from their own file's init() with a Run func
+//     (go_build.go, native_inline.go, constraints.go, workflow_install.go).
+//
+// Adding a script-backed check is one seed.go entry plus its backing script;
+// porting a check to native Go moves it into its own file. Either way there is
+// no orchestrator switch to edit — the registry is the only coupling point.
+package checks
+
+import "github.com/boshu2/agentops/cli/internal/gates"
+
+// Change-class path globs (ported from the bash gate's HAS_<CLASS> regexes).
+var (
+	goPaths = []string{"cli/**", "go.mod", "go.sum"}
+	// go.lint runs the repo-pinned golangci-lint over any Go change, plus a
+	// self-reference (the gate script + its bats) so editing the gate re-runs it.
+	goLintPaths = []string{
+		"cli/**",
+		"go.mod",
+		"go.sum",
+		"scripts/check-go-lint.sh",
+		"tests/scripts/check-go-lint.bats",
+	}
+	skillPaths = []string{"skills/**", "tests/skills/**"}
+	// skill.scenario-test-linkage routes on the scenario corpus PLUS its own
+	// surfaces — the script, allowlist, bats twin, and shared ratchet lib were
+	// previously un-routed (self-routing repair, premortem FM3,
+	// age-ratchet-lib-extraction-bv7d.7).
+	scenarioLinkagePaths = []string{
+		"skills/**", "tests/skills/**",
+		"scripts/check-scenario-test-linkage.sh",
+		"scripts/.scenario-linkage-allow",
+		"tests/scripts/check-scenario-test-linkage.bats",
+		"scripts/lib/ratchet.sh",
+	}
+	// skill.probe-coverage (advisory): routes when any skill changes (a new
+	// product/judgment skill needs a probe), when the probe-status ledger
+	// changes, when a probe scenario changes, plus self-reference so editing the
+	// gate/its test re-runs it.
+	skillProbePaths = []string{
+		"skills/**",
+		"skills/SKILL-TIERS.md",
+		"evals/skill-probes/**",
+		"scripts/probe-skill.sh",
+		"scripts/lib/probe-fixture-metadata.py",
+		"scripts/lib/codex-exec.sh",
+		"scripts/lib/preamble.sh",
+		"scripts/check-skill-probe-coverage.sh",
+		// The declared denominator: editing the exclusion list changes the
+		// gate's headline number, so it must re-run the gate.
+		"scripts/.skill-probe-denominator-exclusions",
+		"tests/scripts/probe-skill.bats",
+		"tests/scripts/check-skill-probe-coverage.bats",
+	}
+	// skill.probe-headroom (advisory): routes on the probe corpus and the
+	// scorecard evidence it sweeps, on the Go rule + helper that classify, and
+	// on its own fixtures/script/bats so editing the detector re-runs it. It
+	// deliberately does NOT route on skills/** — headroom is a property of the
+	// scenario and its captures, not of the skill under test.
+	skillProbeHeadroomPaths = []string{
+		"evals/skill-probes/**",
+		"docs/evals/scorecards/**",
+		"tests/fixtures/skill-probes/**",
+		"cli/internal/probeheadroom/**",
+		"cli/cmd/probe-headroom/**",
+		"scripts/check-skill-probe-headroom.sh",
+		"scripts/lib/preamble.sh",
+		"tests/scripts/check-skill-probe-headroom.bats",
+	}
+	// gate.tightening-ratchet (advisory): routes on exactly the two classes it
+	// governs — the Go gate registry and the top-level gate-backing scripts —
+	// plus self-reference so editing the detector or its bats re-runs it. A
+	// scripts/check-*.sh edit is already covered by the second glob.
+	gateTighteningPaths = []string{
+		"cli/internal/gates/**",
+		"scripts/check-*.sh",
+		"tests/scripts/check-gate-tightening-ratchet.bats",
+	}
+	// evidence.grounding (advisory): routes on the three evidence roots it
+	// scans, on the baseline that declares the pinned archive, and on the
+	// detector's own surfaces (script, shared libs it reads, bats). It
+	// deliberately does NOT route on the paths it CITES — a deleted
+	// cli/** file is what the gate is for, not a reason to re-run it early.
+	evidenceGroundingPaths = []string{
+		"docs/audits/**",
+		"docs/evidence/**",
+		"docs/handoffs/**",
+		"scripts/check-evidence-grounding.sh",
+		"scripts/.evidence-grounding-baseline",
+		"scripts/lib/docs-scope.sh",
+		"scripts/lib/ratchet.sh",
+		"scripts/lib/preamble.sh",
+		"tests/scripts/check-evidence-grounding.bats",
+	}
+	operatorLeakPaths = []string{"skills/**", "docs/SKILLS.md", "registry.json", "tests/scripts/check-no-operator-skills.bats", "scripts/check-no-operator-skills.sh"}
+	contractPaths     = []string{"docs/contracts/**", "schemas/**"}
+	ciPolicyPaths     = []string{".github/workflows/validate.yml", "docs/CI-CD.md", "AGENTS.md"}
+	agentsDocPaths    = []string{"AGENTS.md", "docs/agent-workflow-reference.md", "docs/CI-CD.md", "docs/contracts/codex-skill-api.md", ".github/workflows/validate.yml"}
+	// corpus.witness-dolt-jsonl-crosscheck is a HERMETIC self-test: it drives
+	// committed fixtures through cli/cmd/witness-crosscheck and asserts the
+	// detector discriminates (faithful passes, tampered fails). It never reads
+	// .agents/**, so its former corpusPaths routing ({".agents/**",
+	// "docs/canon/**", "canon/**"}) could not fire — only .agents/ao/config.yaml
+	// is tracked and docs/canon//canon/ do not exist. Routed on its real
+	// subject: the fixtures, the helper, the hash-discipline packages it reuses,
+	// and self-reference so editing the gate or its bats re-runs it.
+	witnessCrosscheckPaths = []string{
+		"tests/fixtures/witness/**",
+		"cli/cmd/witness-crosscheck/**",
+		"cli/internal/drwitness/**",
+		"cli/internal/drrebuild/**",
+		"scripts/witness-dolt-jsonl-crosscheck.sh",
+		"tests/scripts/witness-dolt-jsonl-crosscheck.bats",
+	}
+	cliContractPaths = []string{"cli/**", "docs/cli-surface.*", "scripts/check-cli-contract.sh", "scripts/check-docs-cli-snippets.sh", "scripts/generate-cli-reference.sh", "tests/cli_contract_gate.bats", "tests/cli_quality_zero_debt.bats"}
+	// Widened to docs/**: the checker no longer scans a fixed
+	// 6-file set — it scans every LIVE docs/** file (plus the pinned doctrine
+	// files) and ratchets against scripts/.docs-skill-refs-baseline, so any live
+	// doc that acquires a dead `/skill` ref, or any baselined file that no longer
+	// offends, re-runs the gate. skills/** stays a trigger (a rename/retire under
+	// skills/ can turn a live ref dead); the script + baseline + bats self-ref so
+	// editing the gate re-runs it.
+	docSkillRefPaths = []string{
+		"AGENTS.md",
+		"CLAUDE.md",
+		"docs/**",
+		"skills/SKILL-TIERS.md",
+		"skills/**",
+		"scripts/check-doc-skill-refs.sh",
+		"scripts/.docs-skill-refs-baseline",
+		"scripts/lib/docs-scope.sh",
+		// shared ratchet mechanics (age-ratchet-lib-extraction-bv7d.8, FM3)
+		"scripts/lib/ratchet.sh",
+		"tests/scripts/check-doc-skill-refs.bats",
+	}
+	// contract.skill-mesh reads every SKILL.md plus the projections it compares
+	// (catalog, registry) and runs the generator's check.
+	skillMeshPaths = []string{
+		"skills/**", "tests/skills/**",
+		"scripts/check-skill-mesh.py", "scripts/generate-skill-mesh.py",
+		"registry.json",
+	}
+	cathedralCutPaths = []string{
+		"skills/**", "schemas/**", "docs/SCHEMAS.md", "docs/contracts/index.md",
+		"scripts/swarm/**",
+		"scripts/check-cathedral-cut-conformance.py",
+	}
+	// The retired Gas City prototype (packs/agentops-executor/**,
+	// packs/agentops-factory/**, deploy/gc/**) is frozen historical bytes after
+	// the 2026-07-29 upstream-factories pivot and is deliberately unmatched —
+	// no gate rewrites or validates those trees. Only the live maintainer
+	// surface stays gated.
+	gcMaintainerPaths = []string{
+		"scripts/gc-maintainer-ops.sh",
+		"tests/python/test_gc_maintainer_ops.py",
+		"scripts/check-gc-maintainer-ops.sh",
+		"tests/scripts/check-gc-maintainer-ops.bats",
+	}
+	// docs.cli-snippets resolves every `ao …` command cited in a live doc — the
+	// root docs (README/AGENTS/PRODUCT/GOALS/PROGRAM, cli/README) and docs/** —
+	// against the cobra tree, so a rename or removal cannot strand a documented
+	// command. The cobra tree is the authority, so this is a fact check.
+	// Self-reference (script, baseline, bats, resolution + scope libs) re-runs
+	// it when the gate itself changes. (age-gate-the-ungated-egwt.4)
+	docsCliSnippetsPaths = []string{
+		"docs/**",
+		"README.md", "AGENTS.md", "PRODUCT.md", "GOALS.md", "PROGRAM.md", "cli/README.md",
+		"scripts/check-docs-cli-snippets.sh",
+		"scripts/.docs-cli-snippets-baseline",
+		"scripts/lib/ao-snippet-resolve.sh",
+		"scripts/lib/ao_snippet_resolve.py",
+		"scripts/lib/docs-scope.sh",
+		"tests/scripts/check-docs-cli-snippets.bats",
+		// shared ratchet mechanics: a lib edit must re-run every consumer
+		// (age-ratchet-lib-extraction-bv7d.6, FM3)
+		"scripts/lib/ratchet.sh",
+	}
+	// scripts.ao-invocations resolves every LITERAL first-token `ao <sub>`
+	// invocation in an executable script/test against the cobra tree; a
+	// command removal silently strands a caller (the stale-retired-surface
+	// class — age-sydq, age-zei7). Sibling of docs.cli-snippets / skill.cli-snippets
+	// but over EXECUTABLE callers. Runs on any scripts/** or tests/** change plus
+	// a cli/cmd/ao/** change (a removal is the trigger), and self-references the
+	// script, its baseline, the bats twin, and the shared resolution lib so
+	// editing the gate re-runs it. (age-owcs)
+	scriptsAoInvocationsPaths = []string{
+		"scripts/**",
+		"tests/**",
+		"cli/cmd/ao/**",
+		"scripts/lib/ao-snippet-resolve.sh",
+		"scripts/lib/ao_snippet_resolve.py",
+		"scripts/.scripts-ao-invocations-baseline",
+		"tests/scripts/check-scripts-ao-invocations.bats",
+		// covered by scripts/** already; explicit for the ratchet-lib routing
+		// closure test (age-ratchet-lib-extraction-bv7d.5, FM3)
+		"scripts/lib/ratchet.sh",
+	}
+	// shell.exec-bits routes on every shell surface under scripts/ and tests/
+	// (a new .sh, or a mode change on an existing one, is the trigger) plus a
+	// self-reference so editing the gate or its bats twin re-runs it.
+	shellExecBitsPaths = []string{
+		"scripts/**",
+		"tests/**",
+		"scripts/check-shell-exec-bits.sh",
+		"tests/scripts/legible-l2-exec-bits.bats",
+	}
+	// docs.claims-tracked (age-legible-membrane-c): a doc under evals/ or
+	// docs/evals/ that names a repo-relative path in backticks or double quotes is making a
+	// factual claim about the tree — on 2026-09-03 one such claim said an
+	// egress log was "published" while the repo's `*.log` ignore rule kept it
+	// out of the tree, and the fresh verifier accepted the absence because
+	// nothing checked the sentence against the working tree. Routes on the
+	// two doc trees it scans, on `.gitignore` (a rule change can turn a
+	// previously-tracked claim path untracked), on the two trees the claims
+	// POINT AT (deleting a claimed target is what turns a clean sentence
+	// false), and self-reference (the script and its bats live under those two
+	// trees) so editing the gate re-runs it.
+	//
+	// Directory prefixes, not `evals/**/*.md`: the router's own matcher
+	// (cli/internal/gates/routing.go matchGlob) reads a pattern with an
+	// interior `*` as "literal prefix plus literal suffix", so `evals/**/*.md`
+	// demanded a path ENDING in the characters `*/*.md` and selected nothing.
+	// A glob the matcher cannot evaluate is worse than no glob at all: the gate
+	// reads as routed while lying dormant on every doc edit. Over-selecting a
+	// few non-Markdown edits under these trees is the honest cost; the scan is
+	// fast and exits clean when there is nothing to check.
+	docClaimsTrackedPaths = []string{
+		"evals/**",
+		"docs/evals/**",
+		".gitignore",
+		"scripts/**",
+		"tests/**",
+	}
+	// provenance.chain: verify the committed ledger's hash chain at the pre-push
+	// authority boundary (age-gate-the-ungated-egwt.9). Runs on any ledger change
+	// plus self-reference (script + bats) so editing the gate re-runs it.
+	provenanceChainPaths = []string{
+		"docs/provenance/**",
+		"scripts/check-provenance-chain.sh",
+		"tests/scripts/check-provenance-chain.bats",
+	}
+	regenScopePaths = []string{
+		"skills/**",
+		"docs/contracts/**",
+		"docs/reference/agentops-skill-domain-map.md",
+		"docs/reference/agentops-hexagonal-architecture-map.md",
+		"registry.json",
+		"cli/cmd/ao/**",
+		"cli/docs/COMMANDS.md",
+		"docs/cli-surface.json",
+		"docs/cli-surface.md",
+		"evals/agentops-core/cli-command-surface-matrix.json",
+		"evals/agentops-core/fixtures/cli-command-surface-smoke.sh",
+		"scripts/regen-changed-scope.sh",
+		"tests/scripts/skill-standards-convergence.bats",
+	}
+	// Preamble-adoption ratchet: run whenever any script changes (a new/modified
+	// scripts/*.sh is what the ratchet governs) plus the gate's own self-refs so
+	// editing the check, the grandfather snapshot, or its bats re-runs it. The
+	// matcher has no `**.sh` form, so `scripts/**` (dir-prefix) is the routing
+	// glob; the backing script itself narrows governance to top-level scripts/*.sh.
+	preambleRatchetPaths = []string{
+		"scripts/**",
+		"tests/scripts/check-new-scripts-use-preamble.bats",
+		"tests/scripts/preamble.bats",
+		// covered by scripts/** already; explicit for the ratchet-lib routing
+		// closure test (age-ratchet-lib-extraction-bv7d.4, FM3)
+		"scripts/lib/ratchet.sh",
+	}
+	// ADR registry integrity: unique NNNN across files, filename number ==
+	// in-file title number, every ADR carries a Status: line. A duplicate
+	// number (two ADR-0004s — resolved in age-gate-the-ungated-egwt.11) or a
+	// filename/title mismatch must fail the next push, plus self-refs so
+	// go.jsonl-scanner-ratchet: ADVISORY heuristic — flags a NEW raw
+	// bufio.NewScanner over JSONL outside cli/internal/storage. A raw scanner
+	// silently truncates at its 64KB default buffer; the blessed replacement is
+	// storage.ScanJSONL / storage.ScanJSONLFile (loud ErrLineTooLong policy).
+	// Match = cli/** plus self-refs (script, grandfather list, bats) so editing
+	// the gate re-runs it. Advisory PERMANENTLY by design (grep heuristic —
+	// file-level, no AST; false pos/neg possible), see age-storage-hardening-roxg.3.
+	jsonlScannerRatchetPaths = []string{
+		"cli/**",
+		"scripts/check-jsonl-scanner-ratchet.sh",
+		"scripts/.jsonl-scanner-grandfather",
+		"tests/scripts/check-jsonl-scanner-ratchet.bats",
+		// shared ratchet mechanics (age-ratchet-lib-extraction-bv7d.3, FM3)
+		"scripts/lib/ratchet.sh",
+	}
+	// go.atomic-write-ratchet: hand-rolled tmp+rename outside storage/ (the
+	// adoption-convergence gap three recon sweeps flagged). Routes on cli Go
+	// changes + self-references (age-ratchet-lib-extraction-bv7d.9).
+	atomicWriteRatchetPaths = []string{
+		"cli/**",
+		"scripts/check-atomic-write-ratchet.sh",
+		"scripts/.atomic-write-grandfather",
+		"tests/scripts/check-atomic-write-ratchet.bats",
+		"scripts/lib/ratchet.sh",
+	}
+	// skill.python-ratchet: ADR-0016 section 3 forbids shipping Python inside a
+	// skill and calls it "a gate failure, not a style nit" — while no gate
+	// existed. Routes on the governed source tree plus self-references and the
+	// ADR itself (an amendment that widens or narrows the rule must re-run the
+	// check that enforces it).
+	skillPythonRatchetPaths = []string{
+		"skills/**",
+		"scripts/check-skill-python-ratchet.sh",
+		"scripts/.skill-python-grandfather",
+		"tests/scripts/check-skill-python-ratchet.bats",
+		"docs/adr/ADR-0016-state-tiers.md",
+		"scripts/lib/ratchet.sh",
+	}
+)
+
+func init() {
+	seed := []gates.Check{
+		// always-run (no Match): structural invariants that hold regardless of
+		// what changed.
+		{ID: "always.mutation-route", Tiers: gates.Fast | gates.Full, Blocking: true, Backing: "check-mutation-route-coverage.sh"},
+		{ID: "always.no-tracked-agents", Tiers: gates.Fast | gates.Full, Blocking: true, Backing: "check-no-tracked-agents.sh"},
+		// static portability guard for the never-safe `find -printf` (GNU-only)
+		// class — four real instances shipped because no gate caught it and Linux
+		// CI succeeds at runtime; only BSD/macOS find errors. Always-run: it scans
+		// ALL tracked first-party shell (incl. extensionless hooks no *.sh Match
+		// glob would catch), and the fast grep makes a path-class trigger needless.
+		{ID: "always.shell-portability", Tiers: gates.Fast | gates.Full, Blocking: true, Backing: "check-shell-portability.sh"},
+		// preamble-adoption ratchet: a new/changed top-level scripts/*.sh must
+		// source scripts/lib/preamble.sh (the hardened strict-mode + REPO_ROOT +
+		// portable helpers) or carry a `# preamble-exempt: <reason>` line. The
+		// preamble had ZERO adopters and all 13 scripts added after the
+		// opportunistic-adoption decision re-hand-rolled it — a doc instruction was
+		// measured-inert, only a gate changes behavior. Grandfathered tree is
+		// exempt and the allowlist only shrinks. Advisory for one clean cycle, then
+		// flips Blocking (age-gate-the-ungated-egwt.10).
+		{ID: "shell.preamble-ratchet", Tiers: gates.Full, Match: preambleRatchetPaths, Blocking: false, Backing: "check-new-scripts-use-preamble.sh", RepairHint: "source scripts/lib/preamble.sh (or add '# preamble-exempt: <reason>'); advisory one clean cycle then flips Blocking (age-gate-the-ungated-egwt.10)"},
+		// always-run + fail-closed PATH guard: a private artifact (corpus,
+		// tracker, untraceable wiki) must never reach the PUBLIC repo. No Match
+		// glob — a force-added private path might not match any corpus glob, so
+		// changed-file scoping must never be able to skip this (ag-ao0eo).
+		{ID: "corpus.path-guard", Tiers: gates.Fast | gates.Full, Blocking: true, Backing: "check-corpus-path-guard.sh"},
+
+		// routed by change class
+		gates.GoCLIArchitectureCheck(),
+		{ID: "go.command-test-pair", Tiers: gates.Fast | gates.Full, Match: goPaths, Blocking: true, Backing: "check-go-command-test-pair.sh"},
+		// go.lint: enforce the documented lint budgets (.claude/rules/go.md —
+		// gocyclo fail at 25, errcheck, staticcheck, copyloopvar) via the
+		// repo-pinned golangci-lint. Full-tier only for now: the full-tree run is
+		// too slow to sit in Fast; promote to Fast once measured <60s on changed
+		// scope (age-gate-the-ungated-egwt.7). Blocking is safe — the tree lands
+		// at 0 findings.
+		{ID: "go.lint", Tiers: gates.Full, Match: goLintPaths, Blocking: true, Backing: "check-go-lint.sh", RepairHint: "cd cli && make lint; fix or split — budgets in .claude/rules/go.md; promote to Fast tier only after measured <60s on changed scope (age-gate-the-ungated-egwt.7)"},
+		{ID: "skill.schema", Tiers: gates.Fast | gates.Full, Match: skillPaths, Blocking: true, Backing: "validate-skill-schema.sh"},
+		{ID: "skill.triggers", Tiers: gates.Fast | gates.Full, Match: skillPaths, Blocking: true, Backing: "validate-skill-triggers.sh"},
+		{ID: "contract.cathedral-cut", Tiers: gates.Fast | gates.Full, Match: cathedralCutPaths, Blocking: true, Backing: "check-cathedral-cut-conformance.py"},
+		{ID: "adapter.gc-maintainer", Tiers: gates.Fast | gates.Full, Match: gcMaintainerPaths, Blocking: true, Backing: "check-gc-maintainer-ops.sh", RepairHint: "bash -n scripts/gc-maintainer-ops.sh; python3 -m unittest tests.python.test_gc_maintainer_ops"},
+		{ID: "contract.skill-mesh", Tiers: gates.Fast | gates.Full, Match: skillMeshPaths, Blocking: true, Backing: "check-skill-mesh.py"},
+		{ID: "contract.finding-registry", Tiers: gates.Fast | gates.Full, Match: contractPaths, Blocking: true, Backing: "check-finding-registry.sh"},
+		{ID: "ci.policy-parity", Tiers: gates.Fast | gates.Full, Match: ciPolicyPaths, Blocking: true, Backing: "validate-ci-policy-parity.sh"},
+		// skill class (PB1 parity batch — all shell-backed via ScriptRunner)
+		{ID: "skill.runtime-formats", Tiers: gates.Fast | gates.Full, Match: skillPaths, Blocking: true, Backing: "validate-skill-runtime-formats.sh"},
+		{ID: "skill.runtime-parity", Tiers: gates.Fast | gates.Full, Match: skillPaths, Blocking: true, Backing: "validate-skill-runtime-parity.sh"},
+		{ID: "skill.cli-snippets", Tiers: gates.Fast | gates.Full, Match: skillPaths, Blocking: true, Backing: "validate-skill-cli-snippets.sh"},
+		{ID: "skill.manifests", Tiers: gates.Fast | gates.Full, Match: skillPaths, Blocking: true, Backing: "validate-manifests.sh", Args: []string{"--repo-root", "."}},
+		// skill.probe-coverage (ADVISORY): a product-/judgment-tier skill whose
+		// tier badge carries no BEHAVIORAL-probe result is unmeasured — the badge
+		// is editorial, not proven. This NAMES the unmeasured ones. Advisory-first
+		// (Blocking:false, warn never fail) exactly like skill.isolation and the
+		// egwt gates: the spine is probed first, the ratchet drives the rest, and
+		// the Blocking:false->true flip is made deliberately once covered. age-e508.1.
+		{ID: "skill.probe-coverage", Tiers: gates.Fast | gates.Full, Match: skillProbePaths, Blocking: false, Backing: "check-skill-probe-coverage.sh", RepairHint: "capture a new immutable fixture set with scripts/probe-skill.sh, write its v3 scorecard, then record the manifest-backed result in evals/skill-probes/LEDGER.md (hand-maintained; never inside generated SKILL-TIERS.md); advisory — probe the spine, ratchet the rest"},
+		// skill.probe-headroom (ADVISORY): the coverage gate above counts probe
+		// RESULTS; this one asks whether a result could have existed at all. An
+		// INERT verdict covers two different things — the skill changed nothing
+		// (a real null) and the control arm already aced the scenario (a void
+		// row) — and only the control arm's absolute rate separates them.
+		// HERMETIC: two committed fixture pairs carrying the same INERT verdict
+		// are driven through cli/cmd/probe-headroom and the gate asserts the
+		// detector still discriminates, then sweeps the real scorecards
+		// advisory-only. Blocking:false; the flip is made later on measured
+		// evidence, never on a calendar.
+		{ID: "skill.probe-headroom", Tiers: gates.Fast | gates.Full, Match: skillProbeHeadroomPaths, Blocking: false, Backing: "check-skill-probe-headroom.sh", RepairHint: "a SATURATED probe group has no headroom left: retire the scenario (promote it to a seeded-defect probe) or record the honest ceiling finding — do NOT re-run it at a lower effort, and do not cite it in a new evals/skill-probes/LEDGER.md row"},
+		{ID: "skill.no-operator-leakage", Tiers: gates.Fast | gates.Full, Match: operatorLeakPaths, Blocking: true, Backing: "check-no-operator-skills.sh"},
+		{ID: "skill.heal-strict", Tiers: gates.Full, Match: skillPaths, Blocking: true, Backing: "skills/skill-builder/scripts/heal.sh", Args: []string{"--check", "--strict"}},
+		{ID: "skill.frontmatter-v2", Tiers: gates.Full, Match: skillPaths, Blocking: true, Backing: "validate-skill-frontmatter.sh"},
+		{ID: "skill.body-refs", Tiers: gates.Full, Match: skillPaths, Blocking: true, Backing: "validate-skill-body-refs.sh"},
+		{ID: "skill.scenario-test-linkage", Tiers: gates.Full, Match: scenarioLinkagePaths, Blocking: true, Backing: "check-scenario-test-linkage.sh"},
+		// skill.python-ratchet: BLOCKING from the first cycle, unlike the
+		// preamble ratchet's advisory-then-flip. The rule is not new and was not
+		// being phased in — ADR-0016 fixed it on 2026-07-18 and already declares
+		// the violation "a gate failure". The tree lands at zero NEW violations
+		// (all 24 pre-existing execution-path files are pinned), so blocking
+		// costs nothing and advisory would let the count grow during the very
+		// window the gate exists to close.
+		{ID: "skill.python-ratchet", Tiers: gates.Fast | gates.Full, Match: skillPythonRatchetPaths, Blocking: true, Backing: "check-skill-python-ratchet.sh", Args: []string{"--scope", "head"}, RepairHint: "route the logic into an `ao` subcommand and invoke it from the skill through `sh` glue (ADR-0016 section 3); prototype in the scratch tier first — allowlisting is rejected by the growth guard"},
+
+		// go class
+		{ID: "go.home-isolation", Tiers: gates.Fast | gates.Full, Match: goPaths, Blocking: true, Backing: "check-home-isolation.sh"},
+		{ID: "go.test-home-isolation", Tiers: gates.Fast | gates.Full, Match: goPaths, Blocking: true, Backing: "check-test-home-isolation.sh"},
+		{ID: "go.complexity", Tiers: gates.Full, Match: goPaths, Blocking: true, Backing: "check-go-complexity.sh"},
+		{ID: "go.cli-reference", Tiers: gates.Full, Match: goPaths, Blocking: true, Backing: "generate-cli-reference.sh", Args: []string{"--check"}},
+		{ID: "go.cli-contract", Tiers: gates.Fast | gates.Full, Match: cliContractPaths, Blocking: true, Backing: "check-cli-contract.sh"},
+		{ID: "go.cli-surface-counts", Tiers: gates.Full, Match: goPaths, Blocking: true, Backing: "update-cli-surface-counts.sh"},
+		{ID: "go.test-count-regression", Tiers: gates.Full, Match: goPaths, Blocking: true, Backing: "check-test-count-regression.sh"},
+		{ID: "go.test-isolation", Tiers: gates.Fast | gates.Full, Match: goPaths, Blocking: true, Backing: "check-test-isolation.sh"},
+
+		// contract / context-map / swarm classes
+		{ID: "contract.compatibility", Tiers: gates.Fast | gates.Full, Match: contractPaths, Blocking: true, Backing: "check-contract-compatibility.sh"},
+		{ID: "contract.verdict-corpus", Tiers: gates.Fast | gates.Full, Match: []string{
+			"schemas/verdict.v2.schema.json",
+			"skills/validate/scripts/**",
+			"cli/internal/verdictcheck/**",
+			"cli/cmd/ao/status.go",
+			"tests/fixtures/verdict-contract/**",
+			"scripts/check-verdict-contract-corpus.sh",
+		}, Blocking: true, Backing: "check-verdict-contract-corpus.sh",
+			RepairHint: "the Go reader, Python validator, and JSON schema disagree over tests/fixtures/verdict-contract — change contract behavior only together with the corpus"},
+		{ID: "docs.agents-split", Tiers: gates.Full, Match: agentsDocPaths, Blocking: true, Backing: "validate-agents-split.sh"},
+
+		// always-run structural invariants (no Match)
+		{ID: "docs.skill-refs", Tiers: gates.Full, Match: docSkillRefPaths, Blocking: true,
+			Backing: "check-doc-skill-refs.sh"},
+		{ID: "provenance.orphans", Tiers: gates.Full, Match: contractPaths, Blocking: true,
+			Backing: "check-provenance-orphans.sh"},
+		{ID: "provenance.chain", Tiers: gates.Fast | gates.Full, Match: provenanceChainPaths, Blocking: true,
+			Backing:    "check-provenance-chain.sh",
+			RepairHint: "docs/provenance/ledger.jsonl hash chain broken — find the first bad entry with 'ao provenance verify'; repair is a deliberate re-seal, never hand-edit (age-gate-the-ungated-egwt.9)"},
+		{ID: "always.retrieval-manifest-paths", Tiers: gates.Fast | gates.Full, Blocking: true, Backing: "check-retrieval-manifest-paths.sh",
+			Args: []string{"cli/cmd/ao/testdata/retrieval-bench/search-eval-manifest.json"}},
+		{ID: "always.file-manifest-overlap", Tiers: gates.Full, Blocking: true, Backing: "check-file-manifest-overlap.sh"},
+		{ID: "derived.changed-scope", Tiers: gates.Fast, Blocking: true, Backing: "regen-changed-scope.sh", Args: []string{"--check", "--scope", "head"},
+			Match: regenScopePaths, RepairHint: "bash scripts/regen-changed-scope.sh --scope head; for a reported skill run: bash skills/skill-builder/scripts/heal.sh --check --strict skills/<skill>"},
+		{ID: "always.regen-all", Tiers: gates.Full, Blocking: true, Backing: "regen-all.sh", Args: []string{"--check"}, RepairHint: "bash scripts/regen-all.sh"},
+		{ID: "docs.cli-snippets", Tiers: gates.Fast | gates.Full, Match: docsCliSnippetsPaths, Blocking: true, Backing: "check-docs-cli-snippets.sh", RepairHint: "fix the dead ao reference, mark a retirement note with `<!-- ao-resolve: ignore -->`, or prune the stale baseline entry"},
+		{ID: "scripts.ao-invocations", Tiers: gates.Fast | gates.Full, Match: scriptsAoInvocationsPaths, Blocking: false, Backing: "check-scripts-ao-invocations.sh", RepairHint: "fix the dead ao invocation (use the live subcommand or add `# ao-resolve: ignore`), or prune the stale baseline entry; advisory-first, flips Blocking after one clean cycle (age-owcs)"},
+		// shell.exec-bits: ADVISORY — a documented entry point that is tracked
+		// 100644 answers "permission denied" to the exact command AGENTS.md
+		// prints (23 files on 2026-09-02, `scripts/regen-all.sh` among them).
+		// Every other gate invokes scripts through an explicit `bash`, so
+		// nothing else can see this. Advisory-first per the repo convention.
+		{ID: "shell.exec-bits", Tiers: gates.Fast | gates.Full, Match: shellExecBitsPaths, Blocking: false, Backing: "check-shell-exec-bits.sh", RepairHint: "chmod +x <path> && git update-index --chmod=+x <path> for a shebang-bearing script; a sourced library without a shebang belongs under a lib/ directory"},
+		// docs.claims-tracked: BLOCKING — a path an eval doc names is a claim
+		// about the tree, and the 2026-09-03 egress-log incident showed a fresh
+		// verifier will accept it on trust. Fact rule: a candidate path that git
+		// ignores, or that exists but is untracked, is an offender; the
+		// repository lands clean today.
+		{ID: "docs.claims-tracked", Tiers: gates.Fast | gates.Full, Match: docClaimsTrackedPaths, Blocking: true, Backing: "check-doc-claims-tracked.sh", RepairHint: "track the file (git add) if it belongs in the tree, or stop citing a path the repository ignores or does not track"},
+		// go.jsonl-scanner-ratchet: ADVISORY grep-ratchet — a NEW raw
+		// bufio.NewScanner over JSONL outside cli/internal/storage silently
+		// truncates at the 64KB default buffer. Stays advisory PERMANENTLY (unless
+		// drift recurs) — it is a file-level grep heuristic (no AST; false pos/neg
+		// possible), so a false positive must never block a push. age-storage-hardening-roxg.3.
+		{ID: "go.jsonl-scanner-ratchet", Tiers: gates.Full, Match: jsonlScannerRatchetPaths, Blocking: false, Backing: "check-jsonl-scanner-ratchet.sh", Args: []string{"--scope", "head"}, RepairHint: "use storage.ScanJSONL/ScanJSONLFile (loud ErrLineTooLong policy) instead of a raw bufio.NewScanner over JSONL; advisory — see age-storage-hardening-roxg.3"},
+		// go.atomic-write-ratchet: ADVISORY PERMANENTLY at file-level fidelity
+		// (grep heuristic, no AST — same rationale as the jsonl row; graduation
+		// to blocking requires a precision detector earned in its own arc).
+		{ID: "go.atomic-write-ratchet", Tiers: gates.Full, Match: atomicWriteRatchetPaths, Blocking: false, Backing: "check-atomic-write-ratchet.sh", Args: []string{"--scope", "head"}, RepairHint: "use storage.AtomicWriteFile (temp+fsync+rename+fsync-dir) or storage.FsyncDir instead of a hand-rolled tmp+rename; advisory — see age-ratchet-lib-extraction-bv7d.9"},
+		// gate.tightening-ratchet (ADVISORY): "never obtain green by weakening
+		// acceptance" (AGENTS.md) had no enforcement. Over BASE_REF...HEAD this
+		// flags six loosening shapes on the gate surface itself — a ceiling
+		// raised, a floor lowered, a check demoted from blocking to advisory,
+		// shell strictness dropped, a `|| true` added, a suppression added, a
+		// governed gate file deleted — unless a `Gate-Loosen-Reason:` trailer is
+		// in range (the proven Test-Removal-Reason mechanism, generalized).
+		// TIGHTENING always passes. ADVISORY PERMANENTLY at this fidelity: it is
+		// a text-diff heuristic, so a false positive must never block a push,
+		// and a clean run means "none of the six shapes was present" — never
+		// "acceptance was not weakened".
+		{ID: "gate.tightening-ratchet", Tiers: gates.Full, Match: gateTighteningPaths, Blocking: false, Backing: "check-gate-tightening-ratchet.sh", RepairHint: "tighten it back, or — if the loosening is deliberate — add a `Gate-Loosen-Reason: <one-line argument>` trailer to a commit in this range; tightening is always free"},
+		// evidence.grounding (ADVISORY): a persisted audit/receipt/handoff is
+		// only worth the ground under it, and three failure shapes are purely
+		// MECHANICAL — a cited path that does not exist, a full-length commit id
+		// git cannot resolve, an unrendered {{placeholder}}. Whether the evidence
+		// SUPPORTS its claim is semantic and stays in the validate skill; this
+		// gate never touches that half. The dated archive is pinned in
+		// scripts/.evidence-grounding-baseline (two-way, shrink-only) rather
+		// than rewritten, but a finding on a line ADDED since BASE_REF is never
+		// excused by that baseline — history is silenced, live work is not.
+		{ID: "evidence.grounding", Tiers: gates.Full, Match: evidenceGroundingPaths, Blocking: false, Backing: "check-evidence-grounding.sh", RepairHint: "fix the citation (correct the path/commit id, or fill the placeholder); only a point-in-time record whose citation was true when written belongs in scripts/.evidence-grounding-baseline, and every entry there carries its argument"},
+		// corpus.secret-scan was retired: it routed on corpusPaths (unroutable —
+		// the only tracked match was .agents/ao/config.yaml, which its own
+		// git-ls-files filter for *.md/*.jsonl excluded), so it scanned zero
+		// files on every run, and repository-wide credential scanning is covered
+		// by the pinned gitleaks steps in nightly.yml and release.yml
+		// (validate.yml's quick toolchain mode skips gitleaks). corpus.path-guard still guards private artifact PATHS.
+		{ID: "corpus.witness-dolt-jsonl-crosscheck", Tiers: gates.Full, Match: witnessCrosscheckPaths, Blocking: true, Backing: "witness-dolt-jsonl-crosscheck.sh"},
+
+		// final backing-script batch (PB1)
+		{ID: "always.quarantine-empty", Tiers: gates.Fast | gates.Full, Blocking: true, Backing: "check-quarantine-empty.sh"},
+		{ID: "always.test-fixture-parity", Tiers: gates.Fast | gates.Full, Blocking: true, Backing: "check-test-fixture-parity.sh"},
+		{ID: "go.race-fast", Tiers: gates.Fast | gates.Full, Match: goPaths, Blocking: true, Backing: "validate-go-fast.sh"},
+		// release-audit: narrow Match (only release files) + --mode changed, mirroring
+		// the bash gate's needs_release_audit_artifact_check (PB1a Args support).
+		{ID: "release.audit-artifacts", Tiers: gates.Fast | gates.Full, Blocking: true,
+			Backing: "validate-release-audit-artifacts.sh", Args: []string{"--mode", "changed"},
+			Match: []string{"docs/releases/**", "scripts/ci-local-release.sh", "scripts/resolve-release-artifacts.sh", "scripts/validate-release-audit-artifacts.sh", "tests/scripts/release-artifacts.bats"}},
+	}
+	for _, c := range seed {
+		gates.Register(c)
+	}
+}

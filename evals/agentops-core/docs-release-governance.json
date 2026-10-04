@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "id": "agentops-core.docs-release-governance",
+  "name": "AgentOps Docs and Release Governance Canary",
+  "description": "Offline public canary for documentation governance: doc-release stabilization, metadata-derived skill inventory, CLI-skills map parity, CI policy parity, source-backed doc/readme contracts, and OSS docs audit behavior.",
+  "practices": ["llm-eval-harness", "wiki-knowledge-surface"],
+  "domain": "docs",
+  "visibility": "public_canary",
+  "tier": "deterministic",
+  "owners": ["agentops"],
+  "tags": ["canary", "offline", "docs", "release", "readme", "oss-docs", "parity", "governance"],
+  "allowed_runtimes": ["shell", "static"],
+  "environment": {
+    "offline_required": true,
+    "network": "forbidden",
+    "scrub_env_prefixes": ["AGENTOPS_RPI_RUNTIME", "ANTHROPIC_", "OPENAI_"],
+    "timeout_seconds": 240
+  },
+  "scoring": {
+    "aggregate_threshold": 1,
+    "dimensions": [
+      {"name": "correctness", "weight": 2, "threshold": 1, "critical": true},
+      {"name": "process_adherence", "weight": 2, "threshold": 1, "critical": true},
+      {"name": "artifact_quality", "weight": 2, "threshold": 1, "critical": true},
+      {"name": "runtime_compatibility", "weight": 1, "threshold": 1},
+      {"name": "safety", "weight": 1, "threshold": 1}
+    ]
+  },
+  "baseline_policy": {"mode": "compare", "baseline_path": ".agents/evals/baselines/agentops-core.docs-release-governance.baseline.json", "blocking_gate": "none"},
+  "cases": [
+    {
+      "id": "doc-release-stabilization-gate",
+      "title": "doc-release stabilization gate passes",
+      "kind": "command",
+      "objective": "Baseline the doc-release gate that validates links, metadata inventory, CLI-skills map parity, and the changelog release entry.",
+      "runtime": "shell",
+      "timeout_seconds": 240,
+      "inputs": {
+        "cwd": "../..",
+        "shell": "tests/docs/validate-doc-release.sh"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains", "value": "PASS: Link validation"},
+        {"type": "stdout_contains", "value": "PASS: Skill count validation"},
+        {"type": "stdout_contains", "value": "PASS: doc-release gate succeeded"}
+      ],
+      "dimensions": ["correctness", "process_adherence", "artifact_quality"],
+      "critical": true
+    },
+    {
+      "id": "docs-policy-parity-gates",
+      "title": "docs policy parity gates pass",
+      "kind": "command",
+      "objective": "Keep CI policy parity and the metadata inventory directly protected as eval canaries.",
+      "runtime": "shell",
+      "timeout_seconds": 120,
+      "inputs": {
+        "cwd": "../..",
+        "shell": "bash scripts/validate-ci-policy-parity.sh && bash tests/docs/validate-skill-count.sh"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains", "value": "CI_POLICY_PARITY: PASS"},
+        {"type": "stdout_contains", "value": "PASS: metadata inventory covers"}
+      ],
+      "dimensions": ["correctness", "process_adherence", "artifact_quality"],
+      "critical": true
+    },
+    {
+      "id": "REDACTED",
+      "title": "doc skill validators pass across runtimes (README + OSS folded as modes)",
+      "kind": "command",
+      "objective": "Keep documentation authoring skills healthy across shared and Codex artifacts, including README validation (--mode=readme) and OSS documentation workflows (--mode=oss) now absorbed into doc.",
+      "runtime": "shell",
+      "timeout_seconds": 120,
+      "inputs": {
+        "cwd": "../..",
+        "shell": "bash skills/doc/scripts/validate.sh && bash skills-codex/doc/scripts/validate.sh"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains", "value": "Results: 5 passed, 0 failed"}
+      ],
+      "dimensions": ["correctness", "runtime_compatibility", "process_adherence"],
+      "critical": true
+    },
+    {
+      "id": "oss-docs-audit-json-behavior",
+      "title": "OSS docs audit emits valid tiered JSON (--mode=oss helper)",
+      "kind": "command",
+      "objective": "Behaviorally protect the OSS docs audit command's JSON mode so future doc tooling can consume project type, tier scores, and totals deterministically.",
+      "runtime": "shell",
+      "timeout_seconds": 60,
+      "inputs": {
+        "cwd": "../..",
+        "shell": "skills/doc/scripts/audit-oss-docs.sh --json | jq -e '.tier1.total == 4 and .tier2.total == 5 and .tier3.total == 6 and .total_possible == 15' >/dev/null && echo oss-docs-json-ok"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains", "value": "oss-docs-json-ok"}
+      ],
+      "dimensions": ["correctness", "runtime_compatibility", "artifact_quality"],
+      "critical": true
+    },
+    {
+      "id": "REDACTED",
+      "title": "documentation and README skills preserve source-backed claims",
+      "kind": "artifact_check",
+      "objective": "Lock the docs/readme rules that prevent stale or marketing-heavy output: source-backed updates, claim validation, authoritative docs, and trust blocks.",
+      "expectations": [
+        {"type": "artifact_contains", "target": "../../skills/doc/SKILL.md", "value": "Validate existing docs are current"},
+        {"type": "artifact_contains", "target": "../../skills/doc/SKILL.md", "value": "**Validate existing** - docs can go stale"},
+        {"type": "artifact_contains", "target": "../../skills/doc/references/validation-rules.md", "value": "Establish ONE authoritative file per domain. Other docs MUST reference, not duplicate."},
+        {"type": "artifact_contains", "target": "../../skills/doc/references/validation-rules.md", "value": "When running `/doc coverage --verify-claims`"},
+        {"type": "artifact_contains", "target": "../../skills-codex/doc/prompt.md", "value": "Prefer source-backed updates, doc-gap findings, and validation commands over generic prose."},
+        {"type": "artifact_contains", "target": "../../skills/doc/references/readme-craft.md", "value": "Assertions without evidence trigger hostility."},
+        {"type": "artifact_contains", "target": "../../skills/doc/references/readme-craft.md", "value": "Trust block near install"}
+      ],
+      "dimensions": ["process_adherence", "artifact_quality", "safety"],
+      "critical": true
+    },
+    {
+      "id": "doc-release-script-contracts",
+      "title": "doc-release scripts preserve fail-closed parity contracts",
+      "kind": "artifact_check",
+      "objective": "Ensure documentation release scripts keep their checks for release notes, metadata inventory, and CI policy.",
+      "expectations": [
+        {"type": "artifact_contains", "target": "../../tests/docs/validate-doc-release.sh", "value": "run_check \"Link validation\""},
+        {"type": "artifact_contains", "target": "../../tests/docs/validate-doc-release.sh", "value": "run_check \"Skill count validation\""},
+        {"type": "artifact_contains", "target": "../../tests/docs/validate-skill-count.sh", "value": "metadata inventory covers"},
+        {"type": "artifact_contains", "target": "../../scripts/validate-ci-policy-parity.sh", "value": "CI_POLICY_PARITY: PASS"}
+      ],
+      "dimensions": ["process_adherence", "artifact_quality", "safety"],
+      "critical": true
+    }
+  ]
+}

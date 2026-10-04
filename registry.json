@@ -1,0 +1,1196 @@
+{
+  "cadence_recommendations": [],
+  "capabilities": [
+    {
+      "driven_by_skills": [
+        "agent-native"
+      ],
+      "id": "skill:agent-native:role_dispatch",
+      "name": "role_dispatch",
+      "path": "skills/agent-native/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "agent-native"
+      ],
+      "id": "skill:agent-native:observe_workers",
+      "name": "observe_workers",
+      "path": "skills/agent-native/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "agent-native"
+      ],
+      "id": "skill:agent-native:handoff",
+      "name": "handoff",
+      "path": "skills/agent-native/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "agent-native"
+      ],
+      "id": "skill:agent-native:dispatch_once",
+      "name": "dispatch_once",
+      "path": "skills/agent-native/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "agy-native"
+      ],
+      "id": "skill:agy-native:dispatch_explicit_packet",
+      "name": "dispatch_explicit_packet",
+      "path": "skills/agy-native/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "agy-native"
+      ],
+      "id": "skill:agy-native:provide_fresh_context",
+      "name": "provide_fresh_context",
+      "path": "skills/agy-native/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "codex-exec"
+      ],
+      "id": "skill:codex-exec:codex_exec",
+      "name": "codex_exec",
+      "path": "skills/codex-exec/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "council"
+      ],
+      "id": "skill:council:collect_independent_judgments",
+      "name": "collect_independent_judgments",
+      "path": "skills/council/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "council"
+      ],
+      "id": "skill:council:synthesize_disagreement",
+      "name": "synthesize_disagreement",
+      "path": "skills/council/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "council"
+      ],
+      "id": "skill:council:bounded_deliberation",
+      "name": "bounded_deliberation",
+      "path": "skills/council/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "council"
+      ],
+      "id": "skill:council:duel_scored_ideas",
+      "name": "duel_scored_ideas",
+      "path": "skills/council/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "council"
+      ],
+      "id": "skill:council:answer_interview_panel",
+      "name": "answer_interview_panel",
+      "path": "skills/council/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "craft-goal"
+      ],
+      "id": "skill:craft-goal:goal_prompt_design",
+      "name": "goal_prompt_design",
+      "path": "skills/craft-goal/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "craft-goal"
+      ],
+      "id": "skill:craft-goal:goal_prompt_lint",
+      "name": "goal_prompt_lint",
+      "path": "skills/craft-goal/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "doc"
+      ],
+      "id": "skill:doc:doc",
+      "name": "doc",
+      "path": "skills/doc/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "doc"
+      ],
+      "id": "skill:doc:initialize_missing_docs",
+      "name": "initialize_missing_docs",
+      "path": "skills/doc/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "doc"
+      ],
+      "id": "skill:doc:write_session_handoff",
+      "name": "write_session_handoff",
+      "path": "skills/doc/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "domain"
+      ],
+      "id": "skill:domain:domain",
+      "name": "domain",
+      "path": "skills/domain/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "domain"
+      ],
+      "id": "skill:domain:clarify_domain_language",
+      "name": "clarify_domain_language",
+      "path": "skills/domain/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "domain"
+      ],
+      "id": "skill:domain:reconcile_domain_names",
+      "name": "reconcile_domain_names",
+      "path": "skills/domain/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "idea-genie"
+      ],
+      "id": "skill:idea-genie:generate_evidenced_options",
+      "name": "generate_evidenced_options",
+      "path": "skills/idea-genie/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "idea-genie"
+      ],
+      "id": "skill:idea-genie:dueling_idea_genies",
+      "name": "dueling_idea_genies",
+      "path": "skills/idea-genie/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "implement"
+      ],
+      "id": "skill:implement:execute_one_experiment",
+      "name": "execute_one_experiment",
+      "path": "skills/implement/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "implement"
+      ],
+      "id": "skill:implement:collect_factual_evidence",
+      "name": "collect_factual_evidence",
+      "path": "skills/implement/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "interview"
+      ],
+      "id": "skill:interview:interview_caller",
+      "name": "interview_caller",
+      "path": "skills/interview/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "interview"
+      ],
+      "id": "skill:interview:settle_caller_choices",
+      "name": "settle_caller_choices",
+      "path": "skills/interview/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "interview"
+      ],
+      "id": "skill:interview:write_acceptance_examples",
+      "name": "write_acceptance_examples",
+      "path": "skills/interview/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "interview"
+      ],
+      "id": "skill:interview:settle_domain_terms",
+      "name": "settle_domain_terms",
+      "path": "skills/interview/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "memory"
+      ],
+      "id": "skill:memory:recall_applicable_context",
+      "name": "recall_applicable_context",
+      "path": "skills/memory/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "memory"
+      ],
+      "id": "skill:memory:mine_supported_observations",
+      "name": "mine_supported_observations",
+      "path": "skills/memory/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "memory"
+      ],
+      "id": "skill:memory:curate_topic_pages",
+      "name": "curate_topic_pages",
+      "path": "skills/memory/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "memory"
+      ],
+      "id": "skill:memory:toil_mining",
+      "name": "toil_mining",
+      "path": "skills/memory/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "navigate"
+      ],
+      "id": "skill:navigate:observe_work_graph",
+      "name": "observe_work_graph",
+      "path": "skills/navigate/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "navigate"
+      ],
+      "id": "skill:navigate:select_next_wave",
+      "name": "select_next_wave",
+      "path": "skills/navigate/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "navigate"
+      ],
+      "id": "skill:navigate:ratchet_work_graph",
+      "name": "ratchet_work_graph",
+      "path": "skills/navigate/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "navigate"
+      ],
+      "id": "skill:navigate:report_graph_hygiene",
+      "name": "report_graph_hygiene",
+      "path": "skills/navigate/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "orchestrate"
+      ],
+      "id": "skill:orchestrate:coordinate_native_work",
+      "name": "coordinate_native_work",
+      "path": "skills/orchestrate/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "orchestrate"
+      ],
+      "id": "skill:orchestrate:recover_assignments",
+      "name": "recover_assignments",
+      "path": "skills/orchestrate/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "orchestrate"
+      ],
+      "id": "skill:orchestrate:reconcile_feedback",
+      "name": "reconcile_feedback",
+      "path": "skills/orchestrate/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "plan"
+      ],
+      "id": "skill:plan:shape_intent",
+      "name": "shape_intent",
+      "path": "skills/plan/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "plan"
+      ],
+      "id": "skill:plan:define_acceptance",
+      "name": "define_acceptance",
+      "path": "skills/plan/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "plan"
+      ],
+      "id": "skill:plan:bound_write_scope",
+      "name": "bound_write_scope",
+      "path": "skills/plan/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "plan"
+      ],
+      "id": "skill:plan:resume_discovery",
+      "name": "resume_discovery",
+      "path": "skills/plan/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "postmortem"
+      ],
+      "id": "skill:postmortem:postmortem",
+      "name": "postmortem",
+      "path": "skills/postmortem/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "premortem"
+      ],
+      "id": "skill:premortem:challenge_plan",
+      "name": "challenge_plan",
+      "path": "skills/premortem/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "reality-check"
+      ],
+      "id": "skill:reality-check:compare_claim_to_evidence",
+      "name": "compare_claim_to_evidence",
+      "path": "skills/reality-check/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "reality-check"
+      ],
+      "id": "skill:reality-check:measure_declared_goals",
+      "name": "measure_declared_goals",
+      "path": "skills/reality-check/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "reality-check"
+      ],
+      "id": "skill:reality-check:report_native_status",
+      "name": "report_native_status",
+      "path": "skills/reality-check/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "refactor"
+      ],
+      "id": "skill:refactor:refactor",
+      "name": "refactor",
+      "path": "skills/refactor/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "research"
+      ],
+      "id": "skill:research:research",
+      "name": "research",
+      "path": "skills/research/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "research"
+      ],
+      "id": "skill:research:codebase_recon",
+      "name": "codebase_recon",
+      "path": "skills/research/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "research"
+      ],
+      "id": "skill:research:pattern_mining",
+      "name": "pattern_mining",
+      "path": "skills/research/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "reverse-engineer"
+      ],
+      "id": "skill:reverse-engineer:reverse_engineer",
+      "name": "reverse_engineer",
+      "path": "skills/reverse-engineer/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "review"
+      ],
+      "id": "skill:review:review_advisory",
+      "name": "review_advisory",
+      "path": "skills/review/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "review"
+      ],
+      "id": "skill:review:identify_supported_findings",
+      "name": "identify_supported_findings",
+      "path": "skills/review/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "review"
+      ],
+      "id": "skill:review:report_review_gaps",
+      "name": "report_review_gaps",
+      "path": "skills/review/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "rpi"
+      ],
+      "id": "skill:rpi:own_authorized_outcome",
+      "name": "own_authorized_outcome",
+      "path": "skills/rpi/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "rpi"
+      ],
+      "id": "skill:rpi:report",
+      "name": "report",
+      "path": "skills/rpi/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "security"
+      ],
+      "id": "skill:security:security",
+      "name": "security",
+      "path": "skills/security/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "skill-builder"
+      ],
+      "id": "skill:skill-builder:skill_builder",
+      "name": "skill_builder",
+      "path": "skills/skill-builder/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "skill-builder"
+      ],
+      "id": "skill:skill-builder:heal_skill",
+      "name": "heal_skill",
+      "path": "skills/skill-builder/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "skill-builder"
+      ],
+      "id": "skill:skill-builder:export_skill",
+      "name": "export_skill",
+      "path": "skills/skill-builder/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "skill-builder"
+      ],
+      "id": "skill:skill-builder:distill_expertise",
+      "name": "distill_expertise",
+      "path": "skills/skill-builder/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "skill-eval"
+      ],
+      "id": "skill:skill-eval:author_seeded_probe",
+      "name": "author_seeded_probe",
+      "path": "skills/skill-eval/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "skill-eval"
+      ],
+      "id": "skill:skill-eval:run_probe_tier",
+      "name": "run_probe_tier",
+      "path": "skills/skill-eval/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "skill-eval"
+      ],
+      "id": "skill:skill-eval:evaluate_skill_decision",
+      "name": "evaluate_skill_decision",
+      "path": "skills/skill-eval/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "test"
+      ],
+      "id": "skill:test:test",
+      "name": "test",
+      "path": "skills/test/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "using-gc"
+      ],
+      "id": "skill:using-gc:dispatch_explicit_packet",
+      "name": "dispatch_explicit_packet",
+      "path": "skills/using-gc/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "using-gc"
+      ],
+      "id": "skill:using-gc:observe_gc_runtime",
+      "name": "observe_gc_runtime",
+      "path": "skills/using-gc/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "using-gc"
+      ],
+      "id": "skill:using-gc:inspect_pack_registries",
+      "name": "inspect_pack_registries",
+      "path": "skills/using-gc/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "using-gc"
+      ],
+      "id": "skill:using-gc:drive_mayor_door",
+      "name": "drive_mayor_door",
+      "path": "skills/using-gc/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "validate"
+      ],
+      "id": "skill:validate:compute_subject_identity",
+      "name": "compute_subject_identity",
+      "path": "skills/validate/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "validate"
+      ],
+      "id": "skill:validate:judge_acceptance",
+      "name": "judge_acceptance",
+      "path": "skills/validate/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "validate"
+      ],
+      "id": "skill:validate:return_validation_result",
+      "name": "return_validation_result",
+      "path": "skills/validate/SKILL.md",
+      "type": "skill"
+    },
+    {
+      "driven_by_skills": [
+        "validate"
+      ],
+      "id": "skill:validate:persist_verdict",
+      "name": "persist_verdict",
+      "path": "skills/validate/SKILL.md",
+      "type": "skill"
+    }
+  ],
+  "capability_summary": {
+    "cli_commands": 0,
+    "gates": 0,
+    "reference_impls": 0,
+    "skills": 75,
+    "total": 75
+  },
+  "cli_top_level_commands": [],
+  "schema_version": 3,
+  "summary": {
+    "capabilities": 75,
+    "cli_commands": 0,
+    "eval_files": 0,
+    "hooks": 0,
+    "job_types": 0,
+    "knowledge_stores": 0,
+    "skills": 28,
+    "workflows": 0
+  },
+  "surfaces": {
+    "cli_commands": [],
+    "evals": [],
+    "hooks": [],
+    "job_types": [],
+    "knowledge_stores": [],
+    "schedules": [],
+    "skills": [
+      {
+        "capabilities": [
+          "role_dispatch",
+          "observe_workers",
+          "handoff",
+          "dispatch_once"
+        ],
+        "disposition": "keep_optional_adapter",
+        "effects": [
+          "manage_runtime_sessions",
+          "invoke_selected_executor"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "agent-native",
+        "path": "skills/agent-native/",
+        "reference_count": 5,
+        "tier": "meta"
+      },
+      {
+        "capabilities": [
+          "dispatch_explicit_packet",
+          "provide_fresh_context"
+        ],
+        "disposition": "keep_optional_adapter",
+        "effects": [
+          "start_agy_session"
+        ],
+        "has_references": false,
+        "has_skill_md": true,
+        "name": "agy-native",
+        "path": "skills/agy-native/",
+        "reference_count": 0,
+        "tier": "cross-vendor"
+      },
+      {
+        "capabilities": [
+          "codex_exec"
+        ],
+        "disposition": "keep_optional_adapter",
+        "effects": [
+          "run_codex_process",
+          "REDACTED"
+        ],
+        "has_references": false,
+        "has_skill_md": true,
+        "name": "codex-exec",
+        "path": "skills/codex-exec/",
+        "reference_count": 0,
+        "tier": "orchestration"
+      },
+      {
+        "capabilities": [
+          "collect_independent_judgments",
+          "synthesize_disagreement",
+          "bounded_deliberation",
+          "duel_scored_ideas",
+          "answer_interview_panel"
+        ],
+        "disposition": "keep_strategy",
+        "effects": [
+          "write_advisory_council_report"
+        ],
+        "has_references": false,
+        "has_skill_md": true,
+        "name": "council",
+        "path": "skills/council/",
+        "reference_count": 0,
+        "tier": "judgment"
+      },
+      {
+        "capabilities": [
+          "goal_prompt_design",
+          "goal_prompt_lint"
+        ],
+        "disposition": "keep_strategy",
+        "effects": [],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "craft-goal",
+        "path": "skills/craft-goal/",
+        "reference_count": 1,
+        "tier": "judgment"
+      },
+      {
+        "capabilities": [
+          "doc",
+          "initialize_missing_docs",
+          "write_session_handoff"
+        ],
+        "disposition": "keep_specialist",
+        "effects": [
+          "write_documentation",
+          "write_requested_handoff",
+          "REDACTED"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "doc",
+        "path": "skills/doc/",
+        "reference_count": 15,
+        "tier": "product"
+      },
+      {
+        "capabilities": [
+          "domain",
+          "clarify_domain_language",
+          "reconcile_domain_names"
+        ],
+        "disposition": "keep_specialist",
+        "effects": [
+          "REDACTED"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "domain",
+        "path": "skills/domain/",
+        "reference_count": 2,
+        "tier": "knowledge"
+      },
+      {
+        "capabilities": [
+          "generate_evidenced_options",
+          "dueling_idea_genies"
+        ],
+        "disposition": "keep_strategy",
+        "effects": [
+          "write_idea_portfolio"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "idea-genie",
+        "path": "skills/idea-genie/",
+        "reference_count": 2,
+        "tier": "execution"
+      },
+      {
+        "capabilities": [
+          "execute_one_experiment",
+          "collect_factual_evidence"
+        ],
+        "disposition": "keep",
+        "effects": [
+          "modify_declared_subject",
+          "derive_subject_manifest"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "implement",
+        "path": "skills/implement/",
+        "reference_count": 3,
+        "tier": "execution"
+      },
+      {
+        "capabilities": [
+          "interview_caller",
+          "settle_caller_choices",
+          "write_acceptance_examples",
+          "settle_domain_terms"
+        ],
+        "disposition": "keep_strategy",
+        "effects": [
+          "update_intent_source"
+        ],
+        "has_references": false,
+        "has_skill_md": true,
+        "name": "interview",
+        "path": "skills/interview/",
+        "reference_count": 0,
+        "tier": "execution"
+      },
+      {
+        "capabilities": [
+          "recall_applicable_context",
+          "mine_supported_observations",
+          "curate_topic_pages",
+          "toil_mining"
+        ],
+        "disposition": "keep_off_path",
+        "effects": [
+          "write_protected_drafts",
+          "update_authorized_topic_pages",
+          "write_requested_toil_report"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "memory",
+        "path": "skills/memory/",
+        "reference_count": 4,
+        "tier": "execution"
+      },
+      {
+        "capabilities": [
+          "observe_work_graph",
+          "select_next_wave",
+          "ratchet_work_graph",
+          "report_graph_hygiene"
+        ],
+        "disposition": "keep_strategy",
+        "effects": [
+          "update_native_graph"
+        ],
+        "has_references": false,
+        "has_skill_md": true,
+        "name": "navigate",
+        "path": "skills/navigate/",
+        "reference_count": 0,
+        "tier": "execution"
+      },
+      {
+        "capabilities": [
+          "coordinate_native_work",
+          "recover_assignments",
+          "reconcile_feedback"
+        ],
+        "disposition": "keep",
+        "effects": [
+          "dispatch_authorized_workers",
+          "update_native_handoffs"
+        ],
+        "has_references": false,
+        "has_skill_md": true,
+        "name": "orchestrate",
+        "path": "skills/orchestrate/",
+        "reference_count": 0,
+        "tier": "execution"
+      },
+      {
+        "capabilities": [
+          "shape_intent",
+          "define_acceptance",
+          "bound_write_scope",
+          "resume_discovery"
+        ],
+        "disposition": "keep",
+        "effects": [
+          "update_intent_source"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "plan",
+        "path": "skills/plan/",
+        "reference_count": 3,
+        "tier": "execution"
+      },
+      {
+        "capabilities": [
+          "postmortem"
+        ],
+        "disposition": "keep_strategy",
+        "effects": [
+          "write_postmortem_report"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "postmortem",
+        "path": "skills/postmortem/",
+        "reference_count": 1,
+        "tier": "judgment"
+      },
+      {
+        "capabilities": [
+          "challenge_plan"
+        ],
+        "disposition": "keep_strategy",
+        "effects": [
+          "write_advisory_plan_review"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "premortem",
+        "path": "skills/premortem/",
+        "reference_count": 1,
+        "tier": "judgment"
+      },
+      {
+        "capabilities": [
+          "compare_claim_to_evidence",
+          "measure_declared_goals",
+          "report_native_status"
+        ],
+        "disposition": "keep_strategy",
+        "effects": [
+          "write_advisory_gap_report",
+          "write_goal_snapshot",
+          "write_requested_rendered_spec"
+        ],
+        "has_references": false,
+        "has_skill_md": true,
+        "name": "reality-check",
+        "path": "skills/reality-check/",
+        "reference_count": 0,
+        "tier": "judgment"
+      },
+      {
+        "capabilities": [
+          "refactor"
+        ],
+        "disposition": "keep_specialist",
+        "effects": [
+          "modify_source_files"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "refactor",
+        "path": "skills/refactor/",
+        "reference_count": 2,
+        "tier": "execution"
+      },
+      {
+        "capabilities": [
+          "research",
+          "codebase_recon",
+          "pattern_mining"
+        ],
+        "disposition": "keep_specialist",
+        "effects": [
+          "write_research_report",
+          "write_recon_pack",
+          "write_pattern_evidence"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "research",
+        "path": "skills/research/",
+        "reference_count": 3,
+        "tier": "execution"
+      },
+      {
+        "capabilities": [
+          "reverse_engineer"
+        ],
+        "disposition": "keep_specialist",
+        "effects": [
+          "clone_upstream_repo",
+          "authorized_binary_execution",
+          "write_teardown_artifacts"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "reverse-engineer",
+        "path": "skills/reverse-engineer/",
+        "reference_count": 2,
+        "tier": "execution"
+      },
+      {
+        "capabilities": [
+          "review_advisory",
+          "identify_supported_findings",
+          "report_review_gaps"
+        ],
+        "disposition": "keep",
+        "effects": [],
+        "has_references": false,
+        "has_skill_md": true,
+        "name": "review",
+        "path": "skills/review/",
+        "reference_count": 0,
+        "tier": "judgment"
+      },
+      {
+        "capabilities": [
+          "own_authorized_outcome",
+          "report"
+        ],
+        "disposition": "keep_strategy",
+        "effects": [
+          "dispatch_core_phases"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "rpi",
+        "path": "skills/rpi/",
+        "reference_count": 2,
+        "tier": "meta"
+      },
+      {
+        "capabilities": [
+          "security"
+        ],
+        "disposition": "keep_specialist",
+        "effects": [
+          "write_scan_artifacts"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "security",
+        "path": "skills/security/",
+        "reference_count": 6,
+        "tier": "product"
+      },
+      {
+        "capabilities": [
+          "skill_builder",
+          "heal_skill",
+          "export_skill",
+          "distill_expertise"
+        ],
+        "disposition": "keep_specialist",
+        "effects": [
+          "write_skill_source",
+          "write_build_report",
+          "regenerate_skill_projections",
+          "repair_skill_projections",
+          "REDACTED",
+          "write_advisory_proposal"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "skill-builder",
+        "path": "skills/skill-builder/",
+        "reference_count": 10,
+        "tier": "meta"
+      },
+      {
+        "capabilities": [
+          "author_seeded_probe",
+          "run_probe_tier",
+          "evaluate_skill_decision"
+        ],
+        "disposition": "keep_specialist",
+        "effects": [
+          "write_probe_package",
+          "dispatch_probe_producer"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "skill-eval",
+        "path": "skills/skill-eval/",
+        "reference_count": 1,
+        "tier": "meta"
+      },
+      {
+        "capabilities": [
+          "test"
+        ],
+        "disposition": "keep_specialist",
+        "effects": [
+          "write_test_files",
+          "write_test_evidence",
+          "modify_source_files"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "test",
+        "path": "skills/test/",
+        "reference_count": 7,
+        "tier": "execution"
+      },
+      {
+        "capabilities": [
+          "dispatch_explicit_packet",
+          "observe_gc_runtime",
+          "inspect_pack_registries",
+          "drive_mayor_door"
+        ],
+        "disposition": "keep_optional_adapter",
+        "effects": [
+          "operate_gas_city",
+          "configure_codex_trust"
+        ],
+        "has_references": false,
+        "has_skill_md": true,
+        "name": "using-gc",
+        "path": "skills/using-gc/",
+        "reference_count": 0,
+        "tier": "execution"
+      },
+      {
+        "capabilities": [
+          "compute_subject_identity",
+          "judge_acceptance",
+          "return_validation_result",
+          "persist_verdict"
+        ],
+        "disposition": "keep",
+        "effects": [
+          "write_verdict_artifact"
+        ],
+        "has_references": true,
+        "has_skill_md": true,
+        "name": "validate",
+        "path": "skills/validate/",
+        "reference_count": 2,
+        "tier": "judgment"
+      }
+    ],
+    "workflows": []
+  }
+}

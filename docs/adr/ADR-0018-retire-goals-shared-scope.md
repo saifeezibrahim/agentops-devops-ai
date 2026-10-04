@@ -1,0 +1,63 @@
+# ADR-0018: Retire the goals, shared, and scope skills
+
+- **Status:** Accepted, amended for selected CDLC 2026-09-06 (2026-09-03)
+- **Author:** AgentOps maintainers
+- **Builds on:** [ADR-0017](REDACTED.md) (the loop restored; its cathedral-cut gate is where retirements are tombstoned)
+- **Origin:** the 2026-09-02 field audit's inventory of the shipped skills, which named `goals` as a verbatim alias, `shared` as a consumer-less tombstone, and `scope` as five write-scope checks that belong in Plan (the plan folded them into plan step 3); Train 1 excluded them (`docs/plans/REDACTED.md`, Non-goals: "No directory moves, deletions, or retirements (Train 2)") and Train 2 acted on them
+
+## Active lean inventory amendment — 2026-09-09
+
+Add the optional `memory` root and its operation references under ADR-0017's
+lean amendment. Do not restore `goals`, `shared`, `scope`, `recall` or `evolve`
+roots. Recall and curation are Memory operations, not new hard core edges.
+Generate catalog/count projections from `skills/` through regen-all. (The
+generated Codex copy this line once named was removed on 2026-10-03.)
+The earlier T14/T25 inventory expectations below remain historical.
+
+## Active disposition — 2026-09-06 CDLC adoption
+
+Keep `goals`, `shared` and `scope` skill roots retired and their tombstones
+unchanged. Intent shaping uses craft-goal/Plan and fitness owns measurement;
+selected Discovery is a delivery phase, not another root. T14's Recall and
+T25's evolve root change generated counts only when their owning implementations
+land. T04 neither changes the current 54-skill inventory nor removes evolve
+from `REMOVED_SKILLS`. Canonical `skills/` and declared metadata owners generate
+catalogs through `scripts/regen-all.sh`; never hand-edit
+companions. Preserve one owner per behavior and the core/specialist dependency
+invariants. Historical count changes below describe the retirement, not a
+promise of new runnable CDLC roots.
+
+## Historical context
+
+Three shipped skills carried no contract of their own:
+
+- `goals` was a pure `alias-of fitness` whose body delegated verbatim, so a
+  probe of it would have measured `fitness` and filed the verdict under the
+  wrong name; the probe-coverage denominator already excluded it for that
+  reason.
+- `shared` was a tombstone with no consumer, kept only so old links resolved.
+- `scope` held five write-scope checks that every Plan already had to run
+  before an experiment could start, so callers reached it only by knowing the
+  name.
+
+## Decision
+
+Delete all three. `scope`'s five checks move into `plan`'s Workflow step 3
+and `plan`'s description carries `scope`'s former triggers so a caller's own
+words still land on the kernel that owns them (pinned by the routing golden
+`rq-09-scope-to-plan`). `goals` callers use `fitness` directly.
+
+The cathedral-cut conformance gate tombstones the three names in
+`REMOVED_SKILLS`: reintroducing any of them, in `skills/` or a generated
+projection, fails the gate. The Codex package count and golden count pins move
+with the deletions.
+
+## Consequences
+
+- Fifty-four shipped skills instead of fifty-seven; no capability is lost,
+  because none of the three owned a behavior of its own.
+- `plan`'s description grew by three triggers, which raised the routing golden
+  `rq-02` pack ceiling from 90 to 100 tokens (observed 96, disclosed in the
+  golden's notes).
+- Historical prose that mentions the three names stays as history; only
+  active listings and machine inventories were pruned.

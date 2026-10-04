@@ -1,0 +1,10 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "agentops gitleaks config"
+
+[allowlist]
+  paths = [
+    # Temp directories used by tests, reverse-engineer scripts, and scanner output
+    '''^\.tmp/''',
+  ]

@@ -1,0 +1,801 @@
+package doctor
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/boshu2/agentops/cli/internal/openclaw"
+)
+
+// newBridgesTestCtx builds a real MutateContext rooted at a temp repo, with a
+// real run artifact (run dir, backups, reports, actions.jsonl).
+func newBridgesTestCtx(t *testing.T, repoRoot string) (*MutateContext, *RunArtifact) {
+	t.Helper()
+	ra, err := NewRunArtifact(repoRoot, "deadbeef", time.Now())
+	if err != nil {
+		t.Fatalf("NewRunArtifact: %v", err)
+	}
+	actionsFile, err := ra.OpenActionsFile()
+	if err != nil {
+		t.Fatalf("OpenActionsFile: %v", err)
+	}
+	t.Cleanup(func() { _ = actionsFile.Close() })
+	caps := NewCapabilities("test")
+	locks := NewLockManager(filepath.Join(repoRoot, ".doctor", "locks"))
+	ctx := NewMutateContext(ra, caps, repoRoot, locks, actionsFile, false)
+	return ctx.WithFixer("test"), ra
+}
+
+// validSnapshotBytes returns byte-valid, schema-v1 ConsumerSnapshot JSON.
+func validSnapshotBytes(t *testing.T, id string, generatedAt time.Time) []byte {
+	t.Helper()
+	snap := openclaw.ConsumerSnapshot{
+		SchemaVersion: openclaw.ConsumerSnapshotSchemaVersion,
+		SnapshotID:    id,
+		GeneratedAt:   generatedAt.UTC().Format(time.RFC3339Nano),
+		Source:        openclaw.SnapshotSource{Ledger: "test-ledger"},
+		Status:        openclaw.SnapshotStatusCurrent,
+		Resources: openclaw.SnapshotResources{
+			Runs: []openclaw.ResourceSummary{},
+			Jobs: []openclaw.ResourceSummary{},
+			Wiki: []openclaw.ResourceSummary{},
+		},
+	}
+	if err := openclaw.ValidateConsumerSnapshot(snap); err != nil {
+		t.Fatalf("fixture snapshot invalid: %v", err)
+	}
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal fixture snapshot: %v", err)
+	}
+	return append(data, '\n')
+}
+
+// TestBridgesRegistration verifies both detectors and both fixers are registered.
+func TestBridgesRegistration(t *testing.T) {
+	ids := []string{
+		fmOpenClawHealthUnreachable, fmOpenClawSnapshotStale,
+	}
+	for _, id := range ids {
+		var found bool
+		for _, d := range Detectors() {
+			if d.ID() == id {
+				found = true
+				if d.Subsystem() != subsystemBridges {
+					t.Errorf("detector %s subsystem = %q, want %q", id, d.Subsystem(), subsystemBridges)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("detector %s not registered", id)
+		}
+		fx := FixerByID(id)
+		if fx == nil {
+			t.Fatalf("fixer %s not registered", id)
+		}
+	}
+}
+
+// TestBridgesAutoFixableFlags verifies exactly one fixer is auto-fixable.
+func TestBridgesAutoFixableFlags(t *testing.T) {
+	cases := map[string]bool{
+		fmOpenClawHealthUnreachable: false,
+		fmOpenClawSnapshotStale:     true,
+	}
+	autoCount := 0
+	for id, want := range cases {
+		fx := FixerByID(id)
+		if fx == nil {
+			t.Fatalf("fixer %s missing", id)
+		}
+		if got := fx.AutoFixable(); got != want {
+			t.Errorf("fixer %s AutoFixable() = %v, want %v", id, got, want)
+		}
+		if fx.AutoFixable() {
+			autoCount++
+		}
+	}
+	if autoCount != 1 {
+		t.Errorf("auto-fixable fixer count = %d, want 1", autoCount)
+	}
+}
+
+// TestBridgesOpenClawHealthNotConfiguredYieldsNoFinding verifies optional
+// OpenClaw health stays quiet when the bridge has never been activated.
+func TestBridgesOpenClawHealthNotConfiguredYieldsNoFinding(t *testing.T) {
+	repo := t.TempDir()
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir(), Online: true}
+
+	fs, err := openclawHealthUnreachableDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Fatalf("findings = %d, want 0 for unconfigured OpenClaw: %+v", len(fs), fs)
+	}
+}
+
+// TestBridgesOpenClawHealthActivationMissing verifies the detector fires the
+// activation-missing sub-case when OpenClaw state exists but activation does not.
+func TestBridgesOpenClawHealthActivationMissing(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, openclaw.SnapshotDirRel), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir(), Online: true}
+
+	fs, err := openclawHealthUnreachableDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(fs) != 1 {
+		t.Fatalf("findings = %d, want 1", len(fs))
+	}
+	if !strings.HasPrefix(fs[0].Evidence.File, "activation_missing:") {
+		t.Errorf("evidence = %q, want activation_missing classification", fs[0].Evidence.File)
+	}
+	if fs[0].Remediation.AutoFixable {
+		t.Error("health-unreachable finding must not be auto-fixable")
+	}
+}
+
+// TestBridgesOpenClawHealthUnreachableFixerRefuses verifies the detect-only
+// fixer reports without rewriting the activation file.
+func TestBridgesOpenClawHealthUnreachableFixerRefuses(t *testing.T) {
+	repo := t.TempDir()
+	// Activation pointing at a port that deterministically refuses connections.
+	actDir := filepath.Join(repo, ".agents", "daemon")
+	if err := os.MkdirAll(actDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	actPath := filepath.Join(actDir, "activation.json")
+	actBytes := []byte(`{"base_url":"http://127.0.0.1:1"}`)
+	if err := os.WriteFile(actPath, actBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, ra := newBridgesTestCtx(t, repo)
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir(), Online: true}
+
+	res, err := openclawHealthUnreachableFixer{}.Fix(ctx, env, nil)
+	if err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if res.Fixed {
+		t.Error("detect-only fixer must report Fixed=false")
+	}
+	if res.ActionsTaken != 1 {
+		t.Errorf("ActionsTaken = %d, want 1", res.ActionsTaken)
+	}
+	// The fixer must NOT have rewritten the activation file.
+	after, err := os.ReadFile(actPath)
+	if err != nil {
+		t.Fatalf("activation.json gone: %v", err)
+	}
+	if string(after) != string(actBytes) {
+		t.Errorf("activation.json was rewritten: got %q", after)
+	}
+	reportFile := filepath.Join(ra.RunDir, "reports", fmOpenClawHealthUnreachable+".txt")
+	body, err := os.ReadFile(reportFile)
+	if err != nil {
+		t.Fatalf("report not written: %v", err)
+	}
+	if strings.Contains(string(body), "ao agentopsd") {
+		t.Errorf("report still instructs the removed `ao agentopsd` command: %q", body)
+	}
+	if !strings.Contains(string(body), "OpenClaw") {
+		t.Errorf("report missing OpenClaw remediation guidance: %q", body)
+	}
+}
+
+// TestBridgesSnapshotNotConfiguredYieldsNoFinding verifies an absent optional
+// OpenClaw bridge does not make full doctor fail on a hookless 3.0 checkout.
+func TestBridgesSnapshotNotConfiguredYieldsNoFinding(t *testing.T) {
+	repo := t.TempDir()
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir()}
+
+	fs, err := openclawSnapshotStaleDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Fatalf("findings = %d, want 0 for unconfigured OpenClaw: %+v", len(fs), fs)
+	}
+}
+
+// TestBridgesSnapshotActivatedLatestMissingDetects verifies a configured
+// OpenClaw bridge still reports when its snapshot is absent.
+func TestBridgesSnapshotActivatedLatestMissingDetects(t *testing.T) {
+	repo := t.TempDir()
+	actDir := filepath.Join(repo, ".agents", "daemon")
+	if err := os.MkdirAll(actDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(actDir, "activation.json"), []byte(`{"base_url":"http://127.0.0.1:1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir()}
+
+	fs, err := openclawSnapshotStaleDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(fs) != 1 {
+		t.Fatalf("findings = %d, want 1", len(fs))
+	}
+	if !strings.HasPrefix(fs[0].Evidence.File, "latest_missing:") {
+		t.Errorf("evidence = %q, want latest_missing classification", fs[0].Evidence.File)
+	}
+}
+
+// TestBridgesSnapshotTornLatestDetect verifies the detector classifies a torn
+// latest.json with an intact versioned sibling as the auto-fixable sub-case.
+func TestBridgesSnapshotTornLatestDetect(t *testing.T) {
+	repo := t.TempDir()
+	snapDir := filepath.Join(repo, openclaw.SnapshotDirRel)
+	if err := os.MkdirAll(snapDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	good := validSnapshotBytes(t, "snap_evt0001", time.Now())
+	if err := os.WriteFile(filepath.Join(snapDir, "snap_evt0001.json"), good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// latest.json: torn — first 40 bytes of valid JSON (decode error).
+	if err := os.WriteFile(filepath.Join(snapDir, "latest.json"), good[:40], 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir()}
+	fs, err := openclawSnapshotStaleDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(fs) != 1 {
+		t.Fatalf("findings = %d, want 1", len(fs))
+	}
+	if !fs[0].Remediation.AutoFixable {
+		t.Error("torn_latest finding must be auto-fixable")
+	}
+	if !strings.HasPrefix(fs[0].Evidence.File, "torn_latest:snap_evt0001.json") {
+		t.Errorf("evidence = %q, want torn_latest:snap_evt0001.json", fs[0].Evidence.File)
+	}
+}
+
+// TestBridgesSnapshotTornLatestFix verifies the partial fixer reconstructs
+// latest.json verbatim from the intact versioned snapshot, leaves snap_*.json
+// untouched, and records an action line + backup.
+func TestBridgesSnapshotTornLatestFix(t *testing.T) {
+	repo := t.TempDir()
+	snapDir := filepath.Join(repo, openclaw.SnapshotDirRel)
+	if err := os.MkdirAll(snapDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	good := validSnapshotBytes(t, "snap_evt0001", time.Now())
+	goodPath := filepath.Join(snapDir, "snap_evt0001.json")
+	if err := os.WriteFile(goodPath, good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tornBytes := good[:40]
+	latestPath := filepath.Join(snapDir, "latest.json")
+	if err := os.WriteFile(latestPath, tornBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, ra := newBridgesTestCtx(t, repo)
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir()}
+
+	res, err := openclawSnapshotStaleFixer{}.Fix(ctx, env, nil)
+	if err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if !res.Fixed {
+		t.Error("torn-latest fix must report Fixed=true")
+	}
+	if res.ActionsTaken != 1 {
+		t.Errorf("ActionsTaken = %d, want 1", res.ActionsTaken)
+	}
+
+	// latest.json reconstructed byte-identical to the versioned snapshot.
+	rebuilt, err := os.ReadFile(latestPath)
+	if err != nil {
+		t.Fatalf("read rebuilt latest.json: %v", err)
+	}
+	if string(rebuilt) != string(good) {
+		t.Errorf("latest.json not byte-identical to snap_evt0001.json")
+	}
+
+	// Versioned snapshot untouched.
+	srcAfter, err := os.ReadFile(goodPath)
+	if err != nil {
+		t.Fatalf("read snap_evt0001.json: %v", err)
+	}
+	if string(srcAfter) != string(good) {
+		t.Error("snap_evt0001.json was modified — recovery source must be read-only")
+	}
+
+	// Backup of the torn latest.json exists and matches the pre-fix torn bytes.
+	backup := recordedBackup(t, ra, 0)
+	backupBytes, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatalf("torn-latest backup missing: %v", err)
+	}
+	if string(backupBytes) != string(tornBytes) {
+		t.Errorf("backup is not the torn pre-fix bytes: got %q want %q", backupBytes, tornBytes)
+	}
+
+	// actions.jsonl recorded the WriteFile.
+	rec := assertActionLine(t, ra)
+	if rec.Op != "WriteFile" {
+		t.Errorf("action op = %q, want WriteFile", rec.Op)
+	}
+	if !strings.HasSuffix(rec.Path, "latest.json") {
+		t.Errorf("action path = %q, want suffix latest.json", rec.Path)
+	}
+
+	// Idempotence: a second fix is a no-op (file already healthy).
+	res2, err := openclawSnapshotStaleFixer{}.Fix(ctx.WithFixer("test2"), env, nil)
+	if err != nil {
+		t.Fatalf("second Fix: %v", err)
+	}
+	if res2.ActionsTaken != 0 {
+		t.Errorf("idempotent second fix ActionsTaken = %d, want 0", res2.ActionsTaken)
+	}
+}
+
+// TestBridgesSnapshotSchemaMismatchRefuses verifies a schema-bumped latest.json
+// is reported (not fixed) — the doctor never fabricates a downgrade.
+func TestBridgesSnapshotSchemaMismatchRefuses(t *testing.T) {
+	repo := t.TempDir()
+	snapDir := filepath.Join(repo, openclaw.SnapshotDirRel)
+	if err := os.MkdirAll(snapDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A parseable JSON object with schema_version=2.
+	v2 := []byte(`{"schema_version":2,"snapshot_id":"snap_x","generated_at":"2026-01-01T00:00:00Z","source":{"ledger":"l"},"status":"current","resources":{"runs":[],"jobs":[],"wiki":[]}}` + "\n")
+	latestPath := filepath.Join(snapDir, "latest.json")
+	if err := os.WriteFile(latestPath, v2, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, ra := newBridgesTestCtx(t, repo)
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir()}
+
+	// Detector classifies as schema_mismatch, not auto-fixable.
+	fs, err := openclawSnapshotStaleDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(fs) != 1 {
+		t.Fatalf("findings = %d, want 1", len(fs))
+	}
+	if fs[0].Remediation.AutoFixable {
+		t.Error("schema_mismatch finding must NOT be auto-fixable")
+	}
+	if !strings.HasPrefix(fs[0].Evidence.File, "schema_mismatch:") {
+		t.Errorf("evidence = %q, want schema_mismatch", fs[0].Evidence.File)
+	}
+
+	// Fixer reports without rewriting latest.json.
+	res, err := openclawSnapshotStaleFixer{}.Fix(ctx, env, nil)
+	if err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if res.Fixed {
+		t.Error("schema-mismatch sub-case must report Fixed=false")
+	}
+	after, err := os.ReadFile(latestPath)
+	if err != nil {
+		t.Fatalf("latest.json gone: %v", err)
+	}
+	if string(after) != string(v2) {
+		t.Error("latest.json was rewritten — schema downgrade must be refused")
+	}
+	reportFile := filepath.Join(ra.RunDir, "reports", fmOpenClawSnapshotStale+".txt")
+	body, err := os.ReadFile(reportFile)
+	if err != nil {
+		t.Fatalf("report not written: %v", err)
+	}
+	if strings.Contains(string(body), "ao agentopsd") {
+		t.Errorf("report still instructs the removed `ao agentopsd` command: %q", body)
+	}
+	if !strings.Contains(string(body), "regenerate the OpenClaw projection") {
+		t.Errorf("report does not give projection-regeneration guidance: %q", body)
+	}
+}
+
+// assertActionLine asserts that the run's actions.jsonl has at least one line
+// and returns the last record.
+func assertActionLine(t *testing.T, ra *RunArtifact) ActionRecord {
+	t.Helper()
+	recs, err := readActions(ra.ActionsPath())
+	if err != nil {
+		t.Fatalf("readActions: %v", err)
+	}
+	if len(recs) == 0 {
+		t.Fatal("actions.jsonl has no records")
+	}
+	return recs[len(recs)-1]
+}
+
+// ---------------------------------------------------------------------------
+// Symlinked-root guards (age-knowledge-symlink-root-inbpg)
+// ---------------------------------------------------------------------------
+
+// buildBridgesBaitTree populates dir as if it were `.agents`, carrying a
+// would-be finding for both bridge failure modes: an activation file whose
+// empty base_url makes the health probe report unreachable, and a torn
+// latest.json with an intact recovery snapshot (the torn_latest auto-fix
+// sub-case, which would rewrite latest.json in place). Returns rel->bytes for
+// untouched-verification.
+func buildBridgesBaitTree(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	snapRel := filepath.Join("daemon", "projections", "openclaw")
+	files := map[string]string{
+		filepath.Join("daemon", "activation.json"):   `{"base_url":""}`,
+		filepath.Join(snapRel, "latest.json"):        `{"schema_version"`, // torn
+		filepath.Join(snapRel, "snap_recovery.json"): string(validSnapshotBytes(t, "snap-1", time.Now())),
+	}
+	for rel, content := range files {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return files
+}
+
+// TestBridgesSymlinkedAgentsRoot: a `.agents` root that is a symlink to an
+// external tree must silence both bridge detectors, make both fixers refuse
+// with refused_unsafe, record zero actions, and leave the external tree
+// byte-untouched — the lexical scope check alone would have let the torn-latest
+// auto-fix rewrite the external latest.json.
+func TestBridgesSymlinkedAgentsRoot(t *testing.T) {
+	repo := t.TempDir()
+	external := t.TempDir()
+	baits := buildBridgesBaitTree(t, external)
+	if err := os.Symlink(external, filepath.Join(repo, ".agents")); err != nil {
+		t.Fatalf("symlink .agents: %v", err)
+	}
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir(), Online: true}
+
+	for name, d := range map[string]Detector{
+		"health":   openclawHealthUnreachableDetector{},
+		"snapshot": openclawSnapshotStaleDetector{},
+	} {
+		findings, err := d.Detect(env)
+		if err != nil {
+			t.Errorf("%s Detect on symlinked root: %v", name, err)
+		}
+		if len(findings) != 0 {
+			t.Errorf("%s Detect on symlinked root = %d findings, want 0", name, len(findings))
+		}
+	}
+
+	ctx, ra := newBridgesTestCtx(t, repo)
+	for name, f := range map[string]Fixer{
+		"health":   openclawHealthUnreachableFixer{},
+		"snapshot": openclawSnapshotStaleFixer{},
+	} {
+		res, err := f.Fix(ctx, env, nil)
+		if err == nil || !strings.Contains(err.Error(), "refused_unsafe") {
+			t.Errorf("%s Fix on symlinked root: err=%v, want refused_unsafe", name, err)
+			continue
+		}
+		if res.Fixed {
+			t.Errorf("%s Fix reported Fixed despite refusal", name)
+		}
+		if res.ActionsTaken != 0 {
+			t.Errorf("%s Fix took %d actions through a symlinked root", name, res.ActionsTaken)
+		}
+	}
+	recs, err := readActions(ra.ActionsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("action records = %d, want 0", len(recs))
+	}
+	for rel, content := range baits {
+		got, rerr := os.ReadFile(filepath.Join(external, rel))
+		if rerr != nil || string(got) != content {
+			t.Errorf("external file %s = %q err=%v, want %q untouched", rel, got, rerr, content)
+		}
+	}
+}
+
+// TestBridgesSymlinkedLatestJSON covers the file-level variant: the snapshot
+// chain is real but latest.json itself is a symlink to an external file. The
+// snapshot detector must no-op and the fixer must refuse, so the torn-latest
+// rewrite can never land on the external target.
+func TestBridgesSymlinkedLatestJSON(t *testing.T) {
+	repo := t.TempDir()
+	external := t.TempDir()
+	snapDir := filepath.Join(repo, openclaw.SnapshotDirRel)
+	if err := os.MkdirAll(snapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	good := validSnapshotBytes(t, "snap-1", time.Now())
+	if err := os.WriteFile(filepath.Join(snapDir, "snap_recovery.json"), good, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(external, "victim.json")
+	torn := `{"schema_version"`
+	if err := os.WriteFile(victim, []byte(torn), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(snapDir, "latest.json")); err != nil {
+		t.Fatalf("symlink latest.json: %v", err)
+	}
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir(), Online: true}
+
+	findings, err := openclawSnapshotStaleDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("snapshot Detect on symlinked latest.json = %d findings, want 0", len(findings))
+	}
+	ctx, ra := newBridgesTestCtx(t, repo)
+	res, err := openclawSnapshotStaleFixer{}.Fix(ctx, env, nil)
+	if err == nil || !strings.Contains(err.Error(), "refused_unsafe") {
+		t.Fatalf("snapshot Fix on symlinked latest.json: err=%v, want refused_unsafe", err)
+	}
+	if res.ActionsTaken != 0 {
+		t.Fatalf("snapshot Fix took %d actions through a symlinked latest.json", res.ActionsTaken)
+	}
+	recs, err := readActions(ra.ActionsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("action records = %d, want 0", len(recs))
+	}
+	got, err := os.ReadFile(victim)
+	if err != nil || string(got) != torn {
+		t.Fatalf("external latest.json target = %q err=%v, want untouched", got, err)
+	}
+}
+
+// TestBridgesBaitTreeFiresOnRealRoot is the fixture-fidelity control: the same
+// bait tree attached as a REAL .agents must trigger both bridge detectors,
+// proving the zero-finding assertions above are attributable to the symlink
+// guard, not to a dead bait.
+func TestBridgesBaitTreeFiresOnRealRoot(t *testing.T) {
+	repo := t.TempDir()
+	buildBridgesBaitTree(t, filepath.Join(repo, ".agents"))
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir(), Online: true}
+	for name, d := range map[string]Detector{
+		"health":   openclawHealthUnreachableDetector{},
+		"snapshot": openclawSnapshotStaleDetector{},
+	} {
+		findings, err := d.Detect(env)
+		if err != nil {
+			t.Fatalf("%s Detect on real bait tree: %v", name, err)
+		}
+		if len(findings) == 0 {
+			t.Errorf("%s Detect on real bait tree = 0 findings, want >=1 (bait is dead)", name)
+		}
+	}
+}
+
+// TestBridgesSnapshotSymlinkedRecoveryCandidateSkipped: with a real snapshot
+// chain and a torn real latest.json, a symlinked snap_*.json recovery candidate
+// must be SKIPPED — even when it is the newest — so the torn-latest fix imports
+// the real candidate's bytes, never the symlink target's. The real candidate
+// doubles as the fixture-fidelity control: recovery still works, proving the
+// zero-import assertion is attributable to the skip, not a dead recovery path.
+func TestBridgesSnapshotSymlinkedRecoveryCandidateSkipped(t *testing.T) {
+	repo := t.TempDir()
+	external := t.TempDir()
+	snapDir := filepath.Join(repo, openclaw.SnapshotDirRel)
+	if err := os.MkdirAll(snapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Real recovery candidate, older than the symlinked bait.
+	good := validSnapshotBytes(t, "snap_real", time.Now().Add(-time.Hour))
+	if err := os.WriteFile(filepath.Join(snapDir, "snap_evt0001.json"), good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Symlinked candidate pointing at an external VALID snapshot that is NEWER —
+	// following it would both win the newest-by-generated_at race and import
+	// external bytes into latest.json.
+	evilBytes := validSnapshotBytes(t, "snap_evil", time.Now())
+	victim := filepath.Join(external, "valid.json")
+	if err := os.WriteFile(victim, evilBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(snapDir, "snap_evil.json")); err != nil {
+		t.Fatalf("symlink recovery candidate: %v", err)
+	}
+	torn := `{"schema_version"`
+	latestPath := filepath.Join(snapDir, "latest.json")
+	if err := os.WriteFile(latestPath, []byte(torn), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir()}
+
+	fs, err := openclawSnapshotStaleDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(fs) != 1 {
+		t.Fatalf("findings = %d, want 1", len(fs))
+	}
+	if !strings.HasPrefix(fs[0].Evidence.File, "torn_latest:snap_evt0001.json") {
+		t.Errorf("evidence = %q, want recovery from the REAL candidate snap_evt0001.json", fs[0].Evidence.File)
+	}
+
+	ctx, _ := newBridgesTestCtx(t, repo)
+	res, err := openclawSnapshotStaleFixer{}.Fix(ctx, env, nil)
+	if err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if !res.Fixed || res.ActionsTaken != 1 {
+		t.Fatalf("Fix = fixed=%t actions=%d, want fixed=true actions=1", res.Fixed, res.ActionsTaken)
+	}
+	rebuilt, err := os.ReadFile(latestPath)
+	if err != nil {
+		t.Fatalf("read rebuilt latest.json: %v", err)
+	}
+	if string(rebuilt) != string(good) {
+		t.Error("latest.json not rebuilt from the real candidate")
+	}
+	if string(rebuilt) == string(evilBytes) {
+		t.Error("latest.json imported the symlink target's bytes")
+	}
+	gotVictim, err := os.ReadFile(victim)
+	if err != nil || string(gotVictim) != string(evilBytes) {
+		t.Errorf("external recovery target = %q err=%v, want byte-untouched", gotVictim, err)
+	}
+}
+
+// TestBridgesSnapshotAllSymlinkedRecoveryRefuses: when EVERY recovery candidate
+// is a symlink, the fixer must refuse loudly (refused_unsafe) rather than
+// import nothing silently, and the external target must stay byte-untouched.
+func TestBridgesSnapshotAllSymlinkedRecoveryRefuses(t *testing.T) {
+	repo := t.TempDir()
+	external := t.TempDir()
+	snapDir := filepath.Join(repo, openclaw.SnapshotDirRel)
+	if err := os.MkdirAll(snapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	evilBytes := validSnapshotBytes(t, "snap_evil", time.Now())
+	victim := filepath.Join(external, "valid.json")
+	if err := os.WriteFile(victim, evilBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(snapDir, "snap_recovery.json")); err != nil {
+		t.Fatalf("symlink recovery candidate: %v", err)
+	}
+	torn := `{"schema_version"`
+	latestPath := filepath.Join(snapDir, "latest.json")
+	if err := os.WriteFile(latestPath, []byte(torn), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir()}
+
+	fs, err := openclawSnapshotStaleDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if len(fs) != 1 {
+		t.Fatalf("findings = %d, want 1", len(fs))
+	}
+	if !strings.HasPrefix(fs[0].Evidence.File, "torn_symlinked_recovery:") {
+		t.Errorf("evidence = %q, want torn_symlinked_recovery classification", fs[0].Evidence.File)
+	}
+	if fs[0].Remediation.AutoFixable {
+		t.Error("torn_symlinked_recovery finding must NOT be auto-fixable")
+	}
+
+	ctx, ra := newBridgesTestCtx(t, repo)
+	res, err := openclawSnapshotStaleFixer{}.Fix(ctx, env, nil)
+	if err == nil || !strings.Contains(err.Error(), "refused_unsafe") {
+		t.Fatalf("Fix with all-symlink recovery: err=%v, want refused_unsafe", err)
+	}
+	if res.Fixed {
+		t.Error("Fix reported Fixed despite refusal")
+	}
+	if res.ActionsTaken != 0 {
+		t.Errorf("Fix took %d actions, want 0", res.ActionsTaken)
+	}
+	recs, rerr := readActions(ra.ActionsPath())
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("action records = %d, want 0", len(recs))
+	}
+	after, err := os.ReadFile(latestPath)
+	if err != nil || string(after) != torn {
+		t.Errorf("latest.json = %q err=%v, want the torn bytes untouched", after, err)
+	}
+	gotVictim, err := os.ReadFile(victim)
+	if err != nil || string(gotVictim) != string(evilBytes) {
+		t.Errorf("external recovery target = %q err=%v, want byte-untouched", gotVictim, err)
+	}
+}
+
+// TestBridgesNestedDaemonSymlinkConsistent: a real .agents with a SYMLINKED
+// .agents/daemon must make the health and snapshot paths behave CONSISTENTLY —
+// both detectors silent, both fixers refused_unsafe — instead of the health
+// fixer reporting Fixed=true (gating on .agents alone) while the snapshot
+// fixer refuses the same tree.
+func TestBridgesNestedDaemonSymlinkConsistent(t *testing.T) {
+	repo := t.TempDir()
+	external := t.TempDir()
+	// External tree shaped like a daemon dir, with live bait for both FMs.
+	snapRel := filepath.Join("projections", "openclaw")
+	baits := map[string]string{
+		"activation.json":                            `{"base_url":""}`,
+		filepath.Join(snapRel, "latest.json"):        `{"schema_version"`, // torn
+		filepath.Join(snapRel, "snap_recovery.json"): string(validSnapshotBytes(t, "snap-1", time.Now())),
+	}
+	for rel, content := range baits {
+		p := filepath.Join(external, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agents := filepath.Join(repo, ".agents")
+	if err := os.MkdirAll(agents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(agents, "daemon")); err != nil {
+		t.Fatalf("symlink .agents/daemon: %v", err)
+	}
+	env := &DetectEnv{RepoRoot: repo, CWD: repo, HomeDir: t.TempDir(), Online: true}
+
+	for name, d := range map[string]Detector{
+		"health":   openclawHealthUnreachableDetector{},
+		"snapshot": openclawSnapshotStaleDetector{},
+	} {
+		findings, err := d.Detect(env)
+		if err != nil {
+			t.Errorf("%s Detect on nested daemon symlink: %v", name, err)
+		}
+		if len(findings) != 0 {
+			t.Errorf("%s Detect on nested daemon symlink = %d findings, want 0", name, len(findings))
+		}
+	}
+	ctx, ra := newBridgesTestCtx(t, repo)
+	for name, f := range map[string]Fixer{
+		"health":   openclawHealthUnreachableFixer{},
+		"snapshot": openclawSnapshotStaleFixer{},
+	} {
+		res, err := f.Fix(ctx, env, nil)
+		if err == nil || !strings.Contains(err.Error(), "refused_unsafe") {
+			t.Errorf("%s Fix on nested daemon symlink: err=%v, want refused_unsafe (consistent with the snapshot path)", name, err)
+			continue
+		}
+		if res.Fixed {
+			t.Errorf("%s Fix reported Fixed despite refusal", name)
+		}
+		if res.ActionsTaken != 0 {
+			t.Errorf("%s Fix took %d actions through a nested daemon symlink", name, res.ActionsTaken)
+		}
+	}
+	recs, err := readActions(ra.ActionsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("action records = %d, want 0", len(recs))
+	}
+	for rel, content := range baits {
+		got, rerr := os.ReadFile(filepath.Join(external, rel))
+		if rerr != nil || string(got) != content {
+			t.Errorf("external file %s = %q err=%v, want %q untouched", rel, got, rerr, content)
+		}
+	}
+}

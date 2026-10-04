@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "id": "agentops-core.cli-command-surface-matrix",
+  "name": "AgentOps CLI Command Surface Matrix Canary",
+  "description": "Offline public canary for the generated ao command surface: every documented command and subcommand help page builds and opens, heading counts are explicit, and representative operator subcommand docs stay present.",
+  "practices": ["llm-eval-harness", "pragmatic-programmer"],
+  "domain": "cli",
+  "visibility": "public_canary",
+  "tier": "deterministic",
+  "owners": ["agentops"],
+  "tags": ["canary", "offline", "cli", "commands", "docs", "help", "subcommands"],
+  "allowed_runtimes": ["shell", "static"],
+  "environment": {
+    "offline_required": true,
+    "network": "forbidden",
+    "scrub_env_prefixes": ["AGENTOPS_RPI_RUNTIME", "ANTHROPIC_", "OPENAI_"],
+    "timeout_seconds": 180
+  },
+  "scoring": {
+    "aggregate_threshold": 1,
+    "dimensions": [
+      {"name": "correctness", "weight": 2, "threshold": 1, "critical": true},
+      {"name": "runtime_compatibility", "weight": 2, "threshold": 1, "critical": true},
+      {"name": "artifact_quality", "weight": 2, "threshold": 1, "critical": true},
+      {"name": "process_adherence", "weight": 1, "threshold": 1},
+      {"name": "safety", "weight": 1, "threshold": 1}
+    ]
+  },
+  "baseline_policy": {"mode": "compare", "baseline_path": ".agents/evals/baselines/agentops-core.cli-command-surface-matrix.baseline.json", "blocking_gate": "none"},
+  "cases": [
+    {
+      "id": "documented-cli-help-matrix",
+      "title": "every generated CLI command help page opens",
+      "kind": "command",
+      "objective": "Build ao once, parse every top-level and subcommand heading from cli/docs/COMMANDS.md, and prove each documented help page is routable.",
+      "runtime": "shell",
+      "timeout_seconds": 180,
+      "inputs": {
+        "cwd": "../..",
+        "shell": "bash evals/agentops-core/fixtures/cli-command-surface-smoke.sh"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains", "value": "cli-command-headings: top=18 sub=59 all=77"},
+        {"type": "stdout_contains", "value": "cli-help-matrix-ok"}
+      ],
+      "dimensions": ["correctness", "runtime_compatibility", "artifact_quality"],
+      "critical": true
+    },
+    {
+      "id": "cli-reference-gate",
+      "title": "CLI generated docs remain current",
+      "kind": "command",
+      "objective": "Keep the generated CLI reference synchronized with the Go command tree before relying on the matrix smoke.",
+      "runtime": "shell",
+      "timeout_seconds": 120,
+      "inputs": {
+        "cwd": "../..",
+        "shell": "scripts/generate-cli-reference.sh --check"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains", "value": "cli/docs/COMMANDS.md is up to date."}
+      ],
+      "dimensions": ["correctness", "process_adherence", "artifact_quality"],
+      "critical": true
+    },
+    {
+      "id": "cli-json-flag-machine-contracts",
+      "title": "machine-readable CLI JSON flag gate passes",
+      "kind": "command",
+      "objective": "Protect the machine-consumable command subset so command-surface growth does not silently drop --json behavior.",
+      "runtime": "shell",
+      "timeout_seconds": 180,
+      "inputs": {
+        "cwd": "../..",
+        "shell": "bash tests/cli/test-json-flag-consistency.sh"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains", "value": "=== JSON Flag Consistency ==="},
+        {"type": "stdout_contains", "value": "Errors: 0"}
+      ],
+      "dimensions": ["correctness", "runtime_compatibility", "safety"],
+      "critical": true
+    },
+    {
+      "id": "cli-operator-subcommand-docs",
+      "title": "operator subcommand docs cover the breadth of ao",
+      "kind": "artifact_check",
+      "objective": "Lock representative generated docs across the retained checks, evidence, skill-linking, goal, and session surfaces.",
+      "expectations": [
+        {"type": "artifact_contains", "target": "../../cli/docs/COMMANDS.md", "value": "#### `ao gate check`"},
+        {"type": "artifact_contains", "target": "../../cli/docs/COMMANDS.md", "value": "Run deterministic repository checks"},
+        {"type": "artifact_contains", "target": "../../cli/docs/COMMANDS.md", "value": "#### `ao goals measure`"},
+        {"type": "artifact_contains", "target": "../../cli/docs/COMMANDS.md", "value": "Run goal checks and produce a snapshot"},
+        {"type": "artifact_contains", "target": "../../cli/docs/COMMANDS.md", "value": "#### `ao session handoff`"},
+        {"type": "artifact_contains", "target": "../../cli/docs/COMMANDS.md", "value": "Write a small handoff artifact without selecting work, claiming it,"},
+        {"type": "artifact_contains", "target": "../../cli/docs/COMMANDS.md", "value": "#### `ao provenance add`"},
+        {"type": "artifact_contains", "target": "../../cli/docs/COMMANDS.md", "value": "Append one schema-valid, hash-chained provenance edge"},
+        {"type": "artifact_contains", "target": "../../cli/docs/COMMANDS.md", "value": "#### `ao skills link`"},
+        {"type": "artifact_contains", "target": "../../cli/docs/COMMANDS.md", "value": "create a live-tier symlink for every skill dir"}
+      ],
+      "dimensions": ["artifact_quality", "process_adherence", "runtime_compatibility"],
+      "critical": true
+    },
+    {
+      "id": "REDACTED",
+      "title": "CLI source keeps command families registered",
+      "kind": "artifact_check",
+      "objective": "Ensure the Go command tree wires the retained command families that the generated docs and matrix smoke depend on.",
+      "expectations": [
+        {"type": "artifact_contains", "target": "../../cli/cmd/ao/init_composition.go", "value": "rootCmd.AddCommand(newInitCommand())"},
+        {"type": "artifact_contains", "target": "../../cli/cmd/ao/skills_composition.go", "value": "rootCmd.AddCommand(newSkillsCommand())"},
+        {"type": "artifact_contains", "target": "../../cli/cmd/ao/provenance_composition.go", "value": "rootCmd.AddCommand(newProvenanceCommand())"},
+        {"type": "artifact_contains", "target": "../../cli/cmd/ao/goals_composition.go", "value": "rootCmd.AddCommand(newGoalsCommand())"},
+        {"type": "artifact_contains", "target": "../../cli/cmd/ao/session_composition.go", "value": "rootCmd.AddCommand(newSessionCommand())"}
+      ],
+      "dimensions": ["correctness", "artifact_quality"],
+      "critical": true
+    }
+  ]
+}

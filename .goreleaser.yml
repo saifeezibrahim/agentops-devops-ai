@@ -1,0 +1,59 @@
+version: 2
+project_name: ao
+
+builds:
+  - id: ao
+    dir: cli
+    main: ./cmd/ao
+    binary: ao
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: ao
+    name_template: ao-{{ .Os }}-{{ .Arch }}
+    wrap_in_directory: false
+    # Pack the repo's own docs at tag time (explicit, not GoReleaser defaults) so
+    # the tarball README/LICENSE always match the tagged commit. Enforced by
+    # scripts/check-release-parity.sh (tarball README sha256 == repo README).
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  disable: true
+
+release:
+  # Release notes are generated from CHANGELOG.md by scripts/extract-release-notes.sh
+  # and applied after publish by `gh release edit --notes-file release-notes.md` in release.yml. GoReleaser's auto-changelog is disabled.
+  name_template: "{{ .Tag }}"
+
+brews:
+  - name: agentops
+    directory: Formula
+    homepage: https://github.com/boshu2/agentops
+    description: Optional AgentOps CLI for deterministic repository checks and evidence linking
+    license: Apache-2.0
+    install: |
+      bin.install "ao"
+    post_install: |
+      system "codesign", "-f", "-s", "-", "-i", "com.12factoragentops.ao", "#{bin}/ao" if OS.mac?
+    test: |
+      system "#{bin}/ao version"
+    repository:
+      owner: boshu2
+      name: homebrew-agentops
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"

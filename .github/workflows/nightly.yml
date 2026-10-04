@@ -1,0 +1,217 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # 6am UTC daily
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  cli-tests:
+    name: Go CLI Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@REDACTED # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@REDACTED # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: cli/go.sum
+
+      - name: Run CLI tests with coverage
+        working-directory: cli
+        run: |
+          go test -race -coverprofile=coverage.out -covermode=atomic ./... -v
+          echo ""
+          echo "=== Coverage Summary ==="
+          COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')
+          echo "Total coverage: $COVERAGE"
+          echo "COVERAGE=$COVERAGE" >> "$GITHUB_ENV"
+
+      - name: Test CLI builds
+        working-directory: cli
+        run: make build
+
+  static-validation:
+    name: Static Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@REDACTED # v7
+
+      - name: Run smoke tests
+        run: |
+          chmod +x tests/smoke-test.sh
+          ./tests/smoke-test.sh --verbose
+
+      - name: Run docs release gate
+        run: |
+          chmod +x tests/docs/validate-doc-release.sh
+          ./tests/docs/validate-doc-release.sh
+
+  # The release path is otherwise exercised only by a real `v*` tag push, which
+  # is how a retired .goreleaser.yml before-hook stayed broken for 20 days
+  # (docs/audits/release-readiness-v3.3.0.md, "Process lesson"). The nightly run
+  # is the STANDING lane: it catches breakage from toolchain/action drift that
+  # no diff-triggered gate can see.
+  release-path-smoke:
+    name: Release Path Smoke
+    uses: ./.github/workflows/release-path-smoke.yml
+    permissions:
+      contents: read
+
+  security-toolchain:
+    name: Security Toolchain
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@REDACTED # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@REDACTED # v7.0.0
+        with:
+          go-version: '1.27.1'
+
+      - name: Set up Python
+        uses: actions/setup-python@REDACTED # v7.0.0
+        with:
+          python-version: '3.14'
+
+      - name: Install scanner tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          python -m pip install --upgrade pip
+          python -m pip install semgrep==1.169.0 ruff==0.15.21 radon==6.0.1 pytest==9.1.1 \
+            -r evals/skills-rpi/requirements.txt \
+            -r evals/skills-rpi/requirements-readout.txt
+
+          GOBIN=/usr/local/bin go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1
+          GOBIN=/usr/local/bin go install github.com/zricethezav/gitleaks/v8@v8.30.1
+
+          # golangci-lint
+          GOBIN=/usr/local/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1
+
+          # govulncheck — known-CVE reachability over the module graph + stdlib
+          # (sweep 2026-07-09 M-2: the blind spot that let GO-2026-4970 sit a week).
+          # The nightly run is the STANDING lane: it catches CVEs published after
+          # the code landed, which no diff-triggered gate can.
+          GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+
+          # trivy — pinned tag, download-then-execute. Piping a mutable-branch
+          # install script into sh was the semgrep gha-curl-pipe-shell CRITICAL
+          # that blocked the v3.2.0 publisher (supply-chain: a hijacked script
+          # would run unread).
+          curl -sSfL -o /tmp/trivy-install.sh https://raw.githubusercontent.com/aquasecurity/trivy/v0.72.0/contrib/install.sh
+          sh /tmp/trivy-install.sh -b /usr/local/bin v0.72.0
+
+          # hadolint
+          curl -sSfL -o /usr/local/bin/hadolint "https://github.com/hadolint/hadolint/releases/download/v2.14.0/hadolint-Linux-x86_64"
+          chmod +x /usr/local/bin/hadolint
+
+      - name: Run security gate (full)
+        run: |
+          chmod +x scripts/security-gate.sh
+          ./scripts/security-gate.sh --mode full --require-tools
+        env:
+          SECURITY_GATE_OUTPUT_DIR: ${{ runner.temp }}/agentops-security
+          TOOLCHAIN_OUTPUT_DIR: ${{ runner.temp }}/agentops-tooling
+
+      - name: Upload security gate artifacts
+        uses: actions/upload-artifact@REDACTED # v7
+        if: always()
+        with:
+          name: nightly-security-gate
+          path: ${{ runner.temp }}/agentops-security/
+          retention-days: 7
+
+  # ADVISORY — never blocks. `continue-on-error: true` is deliberate and is the
+  # whole point of this job: it grades the committed retrieval-eval goldens
+  # (evals/routing-probes/goldens/) against `ao skills find` and REPORTS the
+  # result. One golden, rq-04-independent-verdict, is red on purpose — it pins a
+  # real gap between how a caller asks for a verdict and how the catalog is
+  # discoverable (evals/routing-probes/README.md, "Standing finding"). A blocking
+  # job would force that finding to be deleted or tuned away; an advisory one
+  # keeps it visible. Promotion to blocking happens only on measured evidence,
+  # in its own change — never on a calendar. Deliberately absent from `summary`'s
+  # needs list so it can never open a nightly-failure issue.
+  routing-goldens-advisory:
+    name: Routing Goldens (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@REDACTED # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@REDACTED # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: cli/go.sum
+
+      - name: Grade routing-probe goldens (advisory)
+        run: bash scripts/check-routing-probe-goldens.sh
+
+  summary:
+    name: Summary
+    needs: [cli-tests, static-validation, release-path-smoke, security-toolchain]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@REDACTED # v7
+
+      - name: Summary
+        run: |
+          {
+            echo "## Nightly Test Results"
+            echo ""
+            echo "| Job | Status |"
+            echo "|-----|--------|"
+            echo "| CLI tests | ${{ needs.cli-tests.result }} |"
+            echo "| Static validation | ${{ needs.static-validation.result }} |"
+            echo "| Release path smoke | ${{ needs.release-path-smoke.result }} |"
+            echo "| Security toolchain | ${{ needs.security-toolchain.result }} |"
+            echo ""
+            echo "Run completed at $(date -u)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create issue on failure
+        if: needs.cli-tests.result == 'failure' || needs.static-validation.result == 'failure' || needs.release-path-smoke.result == 'failure' || needs.security-toolchain.result == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="Nightly build failed: $(date -u +%Y-%m-%d)"
+          BODY="## Nightly Build Failure
+
+          | Job | Status |
+          |-----|--------|
+          | CLI tests | ${{ needs.cli-tests.result }} |
+          | Static validation | ${{ needs.static-validation.result }} |
+          | Release path smoke | ${{ needs.release-path-smoke.result }} |
+          | Security toolchain | ${{ needs.security-toolchain.result }} |
+
+          **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Please investigate and fix before the next release."
+
+          LABEL_ARGS=(--label bug)
+          if gh label list --limit 200 --json name --jq '.[].name' | grep -Fxq "nightly-failure"; then
+            LABEL_ARGS+=(--label nightly-failure)
+          fi
+
+          # Check if issue already exists for today
+          EXISTING=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title --jq 'map(select(.title == "'"$TITLE"'")) | .[0].number' 2>/dev/null || true)
+          if [[ -z "$EXISTING" || "$EXISTING" == "null" ]]; then
+            gh issue create --title "$TITLE" --body "$BODY" "${LABEL_ARGS[@]}"
+          else
+            echo "Issue #$EXISTING already exists for today's failure"
+          fi
+
+      - name: Check for failures
+        if: needs.cli-tests.result == 'failure' || needs.static-validation.result == 'failure' || needs.release-path-smoke.result == 'failure' || needs.security-toolchain.result == 'failure'
+        run: exit 1

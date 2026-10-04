@@ -1,0 +1,148 @@
+{
+  "image": "claude",
+  "schema_version": "skill-image.v1",
+  "skill_count": 28,
+  "skills": [
+    {
+      "disposition": "keep_optional_adapter",
+      "path": "skills/agent-native/",
+      "slug": "agent-native"
+    },
+    {
+      "disposition": "keep_optional_adapter",
+      "path": "skills/agy-native/",
+      "slug": "agy-native"
+    },
+    {
+      "disposition": "keep_optional_adapter",
+      "path": "skills/codex-exec/",
+      "slug": "codex-exec"
+    },
+    {
+      "disposition": "keep_strategy",
+      "path": "skills/council/",
+      "slug": "council"
+    },
+    {
+      "disposition": "keep_strategy",
+      "path": "skills/craft-goal/",
+      "slug": "craft-goal"
+    },
+    {
+      "disposition": "keep_specialist",
+      "path": "skills/doc/",
+      "slug": "doc"
+    },
+    {
+      "disposition": "keep_specialist",
+      "path": "skills/domain/",
+      "slug": "domain"
+    },
+    {
+      "disposition": "keep_strategy",
+      "path": "skills/idea-genie/",
+      "slug": "idea-genie"
+    },
+    {
+      "disposition": "keep",
+      "path": "skills/implement/",
+      "slug": "implement"
+    },
+    {
+      "disposition": "keep_strategy",
+      "path": "skills/interview/",
+      "slug": "interview"
+    },
+    {
+      "disposition": "keep_off_path",
+      "path": "skills/memory/",
+      "slug": "memory"
+    },
+    {
+      "disposition": "keep_strategy",
+      "path": "skills/navigate/",
+      "slug": "navigate"
+    },
+    {
+      "disposition": "keep",
+      "path": "skills/orchestrate/",
+      "slug": "orchestrate"
+    },
+    {
+      "disposition": "keep",
+      "path": "skills/plan/",
+      "slug": "plan"
+    },
+    {
+      "disposition": "keep_strategy",
+      "path": "skills/postmortem/",
+      "slug": "postmortem"
+    },
+    {
+      "disposition": "keep_strategy",
+      "path": "skills/premortem/",
+      "slug": "premortem"
+    },
+    {
+      "disposition": "keep_strategy",
+      "path": "skills/reality-check/",
+      "slug": "reality-check"
+    },
+    {
+      "disposition": "keep_specialist",
+      "path": "skills/refactor/",
+      "slug": "refactor"
+    },
+    {
+      "disposition": "keep_specialist",
+      "path": "skills/research/",
+      "slug": "research"
+    },
+    {
+      "disposition": "keep_specialist",
+      "path": "skills/reverse-engineer/",
+      "slug": "reverse-engineer"
+    },
+    {
+      "disposition": "keep",
+      "path": "skills/review/",
+      "slug": "review"
+    },
+    {
+      "disposition": "keep_strategy",
+      "path": "skills/rpi/",
+      "slug": "rpi"
+    },
+    {
+      "disposition": "keep_specialist",
+      "path": "skills/security/",
+      "slug": "security"
+    },
+    {
+      "disposition": "keep_specialist",
+      "path": "skills/skill-builder/",
+      "slug": "skill-builder"
+    },
+    {
+      "disposition": "keep_specialist",
+      "path": "skills/skill-eval/",
+      "slug": "skill-eval"
+    },
+    {
+      "disposition": "keep_specialist",
+      "path": "skills/test/",
+      "slug": "test"
+    },
+    {
+      "disposition": "keep_optional_adapter",
+      "path": "skills/using-gc/",
+      "slug": "using-gc"
+    },
+    {
+      "disposition": "keep",
+      "path": "skills/validate/",
+      "slug": "validate"
+    }
+  ],
+  "source": "skills/*/SKILL.md metadata"
+}

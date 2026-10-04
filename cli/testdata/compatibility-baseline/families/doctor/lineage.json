@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "family": "doctor",
+  "old_implementation_sha": "REDACTED",
+  "freeze_sha": "REDACTED",
+  "fixture_sha256": "REDACTED",
+  "ownership_sha256": "REDACTED",
+  "scope_sha256": "REDACTED",
+  "migration_state": "migrated",
+  "accepted_sha": "REDACTED"
+}

@@ -1,0 +1,30 @@
+{
+  "id": "retrieval-ratchet-fallback-v1",
+  "description": "Fallback search-eval manifest over checked-in retrieval benchmark ground-truth files.",
+  "queries": [
+    {
+      "id": "q1",
+      "query": "parallel sessions shared worktree untracked files",
+      "intent": "process",
+      "ground_truth": ["cli/cmd/ao/testdata/retrieval-bench/ground-truth/REDACTED.md"]
+    },
+    {
+      "id": "q2",
+      "query": "git checkout main wiped untracked files",
+      "intent": "debugging",
+      "ground_truth": ["cli/cmd/ao/testdata/retrieval-bench/ground-truth/REDACTED.md"]
+    },
+    {
+      "id": "q3",
+      "query": "bridge existing system instead of building clone",
+      "intent": "architecture",
+      "ground_truth": ["cli/cmd/ao/testdata/retrieval-bench/ground-truth/REDACTED.md"]
+    },
+    {
+      "id": "q4",
+      "query": "working system exists bridge before cloning",
+      "intent": "architecture",
+      "ground_truth": ["cli/cmd/ao/testdata/retrieval-bench/ground-truth/REDACTED.md"]
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "name": "valid-pass",
+  "description": "Well-formed PASS with distinct identities, freshness, full evidence.",
+  "expected": "valid",
+  "filename_digest": "REDACTED",
+  "artifact": {
+    "schema_version": "verdict.v2",
+    "acceptance_digest": "REDACTED",
+    "subject_manifest_digest": "REDACTED",
+    "author_context_id": "ctx-author",
+    "validator_context_id": "ctx-validator",
+    "freshness_attestation": {
+      "source": "runtime",
+      "attester_identity": "runtime:test"
+    },
+    "verdict": "PASS",
+    "criteria": [
+      {
+        "id": "c1",
+        "result": "PASS",
+        "evidence_refs": [
+          "gate:go.build"
+        ],
+        "reason": "checked"
+      }
+    ],
+    "findings": [],
+    "evidence_refs": [
+      "gate:go.build"
+    ],
+    "checked": [
+      "cli/**"
+    ],
+    "not_checked": [],
+    "validated_at": "2026-07-18T12:00:00Z",
+    "artifact_digest": "REDACTED"
+  }
+}

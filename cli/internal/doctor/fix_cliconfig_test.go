@@ -1,0 +1,798 @@
+package doctor
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// writeFile is an L2 test helper: it creates parent dirs and writes content.
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// findByID returns the single Finding with id, or fails the test.
+func findByID(t *testing.T, fs []Finding, id string) Finding {
+	t.Helper()
+	for _, f := range fs {
+		if f.ID == id {
+			return f
+		}
+	}
+	t.Fatalf("expected finding %q, got %d findings: %+v", id, len(fs), fs)
+	return Finding{}
+}
+
+// --- FM 1: invalid-config-yaml-swallowed ----------------------------------
+
+func TestCliConfigInvalidConfigYAML_DetectsBrokenHomeConfig(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	// Unterminated double-quoted scalar — fails yaml.Unmarshal at a fixed point.
+	writeFile(t, filepath.Join(home, ".agents", "ao", "config.yaml"),
+		"models:\n  default_tier: \"haiku\n")
+
+	env := &DetectEnv{HomeDir: home, CWD: filepath.Join(tmp, "cwd")}
+	fs, err := invalidConfigYAMLDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	f := findByID(t, fs, fmInvalidConfigYAML)
+	if f.Severity != "P1" {
+		t.Errorf("Severity = %q, want P1", f.Severity)
+	}
+	if f.Subsystem != "cli-config" {
+		t.Errorf("Subsystem = %q, want cli-config", f.Subsystem)
+	}
+	if f.Remediation.AutoFixable {
+		t.Error("AutoFixable = true, want false")
+	}
+	wantPath := filepath.Join(home, ".agents", "ao", "config.yaml")
+	if f.Evidence.File != wantPath {
+		t.Errorf("Evidence.File = %q, want %q", f.Evidence.File, wantPath)
+	}
+	if !strings.Contains(f.Remediation.Command, wantPath) {
+		t.Errorf("Remediation.Command does not name the file: %q", f.Remediation.Command)
+	}
+	if !strings.Contains(f.Remediation.Command, "yaml.safe_load") {
+		t.Errorf("Remediation.Command lacks verify command: %q", f.Remediation.Command)
+	}
+}
+
+func TestCliConfigInvalidConfigYAML_CleanConfigYieldsNoFinding(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	writeFile(t, filepath.Join(home, ".agents", "ao", "config.yaml"),
+		"models:\n  default_tier: haiku\n")
+
+	env := &DetectEnv{HomeDir: home, CWD: filepath.Join(tmp, "cwd")}
+	fs, err := invalidConfigYAMLDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Fatalf("expected 0 findings for valid YAML, got %d: %+v", len(fs), fs)
+	}
+}
+
+func TestCliConfigInvalidConfigYAML_FixerRefuses(t *testing.T) {
+	fx := FixerByID(fmInvalidConfigYAML)
+	if fx == nil {
+		t.Fatal("fixer not registered")
+	}
+	if fx.AutoFixable() {
+		t.Fatal("AutoFixable() = true, want false")
+	}
+	res, err := fx.Fix(nil, nil, []Finding{{ID: fmInvalidConfigYAML}})
+	if err == nil {
+		t.Fatal("Fix() err = nil, want refusal error")
+	}
+	if res.Fixed {
+		t.Error("res.Fixed = true, want false")
+	}
+	if res.ActionsTaken != 0 {
+		t.Errorf("res.ActionsTaken = %d, want 0", res.ActionsTaken)
+	}
+	if !strings.Contains(err.Error(), "refused_unsafe") {
+		t.Errorf("error lacks refused_unsafe: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ao doctor explain "+fmInvalidConfigYAML) {
+		t.Errorf("error does not name the operator command: %v", err)
+	}
+}
+
+// --- FM 2: config-flag-not-threaded ---------------------------------------
+
+func TestCliConfigConfigFlagNotThreaded_DetectsBuggySource(t *testing.T) {
+	repo := t.TempDir()
+	// Buggy shape: root.go uses syncConfigFlagToEnv + AGENTOPS_CONFIG;
+	// config.go has homeConfigPath but never references AGENTOPS_CONFIG.
+	writeFile(t, filepath.Join(repo, "cli", "cmd", "ao", "root.go"),
+		"package main\nfunc syncConfigFlagToEnv() { os.Setenv(\"AGENTOPS_CONFIG\", path) }\n")
+	writeFile(t, filepath.Join(repo, "cli", "internal", "config", "config.go"),
+		"package config\nfunc homeConfigPath() string { return \"~/.agents/ao/config.yaml\" }\n")
+
+	if !probeConfigSourceShape(repo) {
+		t.Fatal("probeConfigSourceShape = false, want true for buggy shape")
+	}
+	env := &DetectEnv{RepoRoot: repo, CWD: repo}
+	fs, err := configFlagNotThreadedDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	f := findByID(t, fs, fmConfigFlagNotThreaded)
+	if f.Severity != "P2" {
+		t.Errorf("Severity = %q, want P2", f.Severity)
+	}
+	if f.Remediation.AutoFixable {
+		t.Error("AutoFixable = true, want false")
+	}
+	if !strings.Contains(f.Remediation.Command, "config.Load") {
+		t.Errorf("Remediation.Command does not name the code fix: %q", f.Remediation.Command)
+	}
+}
+
+func TestCliConfigConfigFlagNotThreaded_FixedSourceYieldsNoFinding(t *testing.T) {
+	repo := t.TempDir()
+	// Fixed shape: config.go references AGENTOPS_CONFIG near homeConfigPath.
+	writeFile(t, filepath.Join(repo, "cli", "cmd", "ao", "root.go"),
+		"package main\nfunc syncConfigFlagToEnv() { os.Setenv(\"AGENTOPS_CONFIG\", path) }\n")
+	writeFile(t, filepath.Join(repo, "cli", "internal", "config", "config.go"),
+		"package config\nfunc homeConfigPath() string { return os.Getenv(\"AGENTOPS_CONFIG\") }\n")
+
+	if probeConfigSourceShape(repo) {
+		t.Fatal("probeConfigSourceShape = true, want false for fixed shape")
+	}
+}
+
+func TestCliConfigConfigFlagNotThreaded_FixerRefuses(t *testing.T) {
+	fx := FixerByID(fmConfigFlagNotThreaded)
+	if fx == nil {
+		t.Fatal("fixer not registered")
+	}
+	if fx.AutoFixable() {
+		t.Fatal("AutoFixable() = true, want false")
+	}
+	res, err := fx.Fix(nil, nil, []Finding{{ID: fmConfigFlagNotThreaded}})
+	if err == nil {
+		t.Fatal("Fix() err = nil, want refusal")
+	}
+	if res.Fixed || res.ActionsTaken != 0 {
+		t.Errorf("res = %+v, want unfixed/zero-actions", res)
+	}
+	if !strings.Contains(err.Error(), "ao-code defect") {
+		t.Errorf("error does not name it as ao-code defect: %v", err)
+	}
+}
+
+// --- FM 3: missing-required-cli -------------------------------------------
+
+// writeFakeCLIRepoRoot writes the cli/go.mod marker that insideAgentopsRepo
+// looks for, so a DetectEnv.RepoRoot can be made to look like an agentops clone.
+func writeFakeCLIRepoRoot(t *testing.T, root string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "cli"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeFile(t, filepath.Join(root, "cli", "go.mod"), "module github.com/boshu2/agentops/cli\n")
+}
+
+func TestCliConfigMissingRequiredCLI_DetectsMissingBdDespiteBrInsideRepo(t *testing.T) {
+	tmp := t.TempDir()
+	fakebin := filepath.Join(tmp, "fakebin")
+	// Only git present, no bd.
+	writeFile(t, filepath.Join(fakebin, "git"), "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(filepath.Join(fakebin, "git"), 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	// A different Beads implementation must not satisfy the BD requirement.
+	writeFile(t, filepath.Join(fakebin, "br"), "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(filepath.Join(fakebin, "br"), 0o755); err != nil {
+		t.Fatalf("chmod br: %v", err)
+	}
+	t.Setenv("PATH", fakebin)
+
+	repoRoot := filepath.Join(tmp, "repo")
+	writeFakeCLIRepoRoot(t, repoRoot)
+	fs, err := missingRequiredCLIDetector{}.Detect(&DetectEnv{RepoRoot: repoRoot})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	f := findByID(t, fs, fmMissingRequiredCLI)
+	if f.Severity != "P1" {
+		t.Errorf("Severity = %q, want P1", f.Severity)
+	}
+	if !strings.Contains(f.Evidence.Query, "missing_clis=bd") {
+		t.Errorf("Evidence.Query missing bd: %q", f.Evidence.Query)
+	}
+	if strings.Contains(f.Evidence.Query, "missing_clis=bd,git") {
+		t.Errorf("git wrongly reported missing: %q", f.Evidence.Query)
+	}
+	if !strings.Contains(f.Remediation.Command, "gastownhall/beads") {
+		t.Errorf("Remediation.Command lacks bd install hint: %q", f.Remediation.Command)
+	}
+}
+
+// Outside an agentops clone, bd is NOT required: users may select another
+// tracker or none. Keep only Git universally required.
+func TestCliConfigMissingRequiredCLI_BdNotRequiredOutsideRepo(t *testing.T) {
+	tmp := t.TempDir()
+	fakebin := filepath.Join(tmp, "fakebin")
+	// Only git present, no bd. RepoRoot is a plain dir (not an agentops clone).
+	writeFile(t, filepath.Join(fakebin, "git"), "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(filepath.Join(fakebin, "git"), 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Setenv("PATH", fakebin)
+
+	fs, err := missingRequiredCLIDetector{}.Detect(&DetectEnv{RepoRoot: filepath.Join(tmp, "not-a-clone")})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Fatalf("expected 0 findings outside a clone with git present, got %d: %+v", len(fs), fs)
+	}
+}
+
+// Outside a clone, a genuinely missing git is still a real P1.
+func TestCliConfigMissingRequiredCLI_GitStillRequiredOutsideRepo(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("PATH", filepath.Join(tmp, "empty"))
+
+	fs, err := missingRequiredCLIDetector{}.Detect(&DetectEnv{RepoRoot: filepath.Join(tmp, "not-a-clone")})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	f := findByID(t, fs, fmMissingRequiredCLI)
+	if f.Severity != "P1" {
+		t.Errorf("Severity = %q, want P1", f.Severity)
+	}
+	if !strings.Contains(f.Evidence.Query, "missing_clis=git") {
+		t.Errorf("Evidence.Query missing git: %q", f.Evidence.Query)
+	}
+	if strings.Contains(f.Evidence.Query, "bd") {
+		t.Errorf("bd wrongly reported outside a clone: %q", f.Evidence.Query)
+	}
+}
+
+func TestCliConfigMissingRequiredCLI_AllPresentYieldsNoFinding(t *testing.T) {
+	tmp := t.TempDir()
+	fakebin := filepath.Join(tmp, "fakebin")
+	for _, name := range []string{"bd", "git"} {
+		p := filepath.Join(fakebin, name)
+		writeFile(t, p, "#!/bin/sh\nexit 0\n")
+		if err := os.Chmod(p, 0o755); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+	}
+	t.Setenv("PATH", fakebin)
+
+	repoRoot := filepath.Join(tmp, "repo")
+	writeFakeCLIRepoRoot(t, repoRoot)
+	fs, err := missingRequiredCLIDetector{}.Detect(&DetectEnv{RepoRoot: repoRoot})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Fatalf("expected 0 findings, got %d: %+v", len(fs), fs)
+	}
+}
+
+func TestCliConfigMissingRequiredCLI_SymlinkEquivalentPathIsNotShadowed(t *testing.T) {
+	tmp := t.TempDir()
+	realbin := filepath.Join(tmp, "usr", "bin")
+	aliasbin := filepath.Join(tmp, "bin")
+	for _, name := range []string{"bd", "git"} {
+		p := filepath.Join(realbin, name)
+		writeFile(t, p, "#!/bin/sh\nexit 0\n")
+		if err := os.Chmod(p, 0o755); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+	}
+	if err := os.MkdirAll(aliasbin, 0o755); err != nil {
+		t.Fatalf("mkdir alias bin: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(realbin, "git"), filepath.Join(aliasbin, "git")); err != nil {
+		t.Skipf("symlink unavailable on this platform: %v", err)
+	}
+	t.Setenv("PATH", aliasbin+string(os.PathListSeparator)+realbin)
+
+	fs, err := missingRequiredCLIDetector{}.Detect(&DetectEnv{})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Fatalf("expected 0 findings for symlink-equivalent git paths, got %d: %+v", len(fs), fs)
+	}
+}
+
+// Two REAL duplicate git installs on PATH (the Homebrew-git-ahead-of-Apple-shim
+// shape) with nothing missing is the DEFAULT state of a macOS dev machine.
+// Shadow-only must not produce a finding at all: the first-resolved CLI works,
+// so this is usually harmless, and any finding here would flip the doctor exit
+// code on every pristine Mac (novice-test edge 3).
+func TestCliConfigMissingRequiredCLI_ShadowOnlyDuplicateGitIsNotAFinding(t *testing.T) {
+	tmp := t.TempDir()
+	brewbin := filepath.Join(tmp, "opt", "homebrew", "bin")
+	usrbin := filepath.Join(tmp, "usr", "bin")
+	for _, dir := range []string{brewbin, usrbin} {
+		p := filepath.Join(dir, "git")
+		writeFile(t, p, "#!/bin/sh\nexit 0\n")
+		if err := os.Chmod(p, 0o755); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+	}
+	t.Setenv("PATH", brewbin+string(os.PathListSeparator)+usrbin)
+
+	fs, err := missingRequiredCLIDetector{}.Detect(&DetectEnv{})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Fatalf("shadow-only duplicate git must yield 0 findings, got %d: %+v", len(fs), fs)
+	}
+}
+
+// A genuinely missing CLI must render the missing-CLI remediation with the
+// actual CLI name interpolated — never the empty-slot "yourself —  — then"
+// rendering the shadow-only case used to produce (novice-test edge 3b).
+func TestCliConfigMissingRequiredCLI_MissingRemediationNamesTheCLI(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("PATH", filepath.Join(tmp, "empty"))
+
+	fs, err := missingRequiredCLIDetector{}.Detect(&DetectEnv{})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	f := findByID(t, fs, fmMissingRequiredCLI)
+	if f.Title != "required external CLI missing from PATH" {
+		t.Errorf("Title = %q, want %q", f.Title, "required external CLI missing from PATH")
+	}
+	if !strings.Contains(f.Remediation.Command, "git:") {
+		t.Errorf("Remediation.Command lacks interpolated git install hint: %q", f.Remediation.Command)
+	}
+	if strings.Contains(f.Remediation.Command, "—  —") {
+		t.Errorf("Remediation.Command rendered an empty hint slot: %q", f.Remediation.Command)
+	}
+}
+
+// When a CLI is genuinely missing, the finding still fires as P1 and duplicate
+// evidence for another required CLI rides along in the evidence query — the
+// shadow signal is informational context, not its own failure mode.
+func TestCliConfigMissingRequiredCLI_MissingBdKeepsShadowedGitEvidence(t *testing.T) {
+	tmp := t.TempDir()
+	binA := filepath.Join(tmp, "binA")
+	binB := filepath.Join(tmp, "binB")
+	for _, dir := range []string{binA, binB} {
+		p := filepath.Join(dir, "git")
+		writeFile(t, p, "#!/bin/sh\nexit 0\n")
+		if err := os.Chmod(p, 0o755); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+	}
+	t.Setenv("PATH", binA+string(os.PathListSeparator)+binB)
+
+	repoRoot := filepath.Join(tmp, "repo")
+	writeFakeCLIRepoRoot(t, repoRoot)
+	fs, err := missingRequiredCLIDetector{}.Detect(&DetectEnv{RepoRoot: repoRoot})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	f := findByID(t, fs, fmMissingRequiredCLI)
+	if f.Severity != "P1" {
+		t.Errorf("Severity = %q, want P1", f.Severity)
+	}
+	if f.Title != "required external CLI missing from PATH" {
+		t.Errorf("Title = %q, want missing title even with shadow evidence", f.Title)
+	}
+	if !strings.Contains(f.Evidence.Query, "missing_clis=bd") {
+		t.Errorf("Evidence.Query missing bd: %q", f.Evidence.Query)
+	}
+	if !strings.Contains(f.Evidence.Query, "shadowed_clis=git -> ") {
+		t.Errorf("Evidence.Query lacks shadowed git context: %q", f.Evidence.Query)
+	}
+	if !strings.Contains(f.Remediation.Command, "gastownhall/beads") {
+		t.Errorf("Remediation.Command lacks bd install hint: %q", f.Remediation.Command)
+	}
+	if strings.Contains(f.Remediation.Command, "—  —") {
+		t.Errorf("Remediation.Command rendered an empty hint slot: %q", f.Remediation.Command)
+	}
+}
+
+func TestCliConfigMissingRequiredCLI_FixerRefuses(t *testing.T) {
+	fx := FixerByID(fmMissingRequiredCLI)
+	if fx == nil {
+		t.Fatal("fixer not registered")
+	}
+	res, err := fx.Fix(nil, nil, []Finding{{ID: fmMissingRequiredCLI}})
+	if err == nil || res.Fixed {
+		t.Fatalf("Fix() = (%+v, %v), want refusal", res, err)
+	}
+	if !strings.Contains(err.Error(), "does not install software") {
+		t.Errorf("error lacks 'does not install software': %v", err)
+	}
+}
+
+// --- FM 4 (retired): optional-codex-cli-absent ----------------------------
+// The optional-codex-absent detector was retired under FU2 (age-6g2du): an
+// optional dependency's absence must never flip the doctor exit code on a
+// pristine install. The legacy check table reports codex as an informational
+// "optional — enables --mixed council review" line instead. See
+// TestCliConfigOptionalCodexAbsent_NotRegistered.
+
+// TestCliConfigOptionalCodexAbsent_NotRegistered locks in the retirement: no
+// detector or fixer for the optional codex CLI may reappear, since an optional
+// dependency's absence must not fail a pristine install.
+func TestCliConfigOptionalCodexAbsent_NotRegistered(t *testing.T) {
+	const retiredID = "fm-cli-config-optional-codex-cli-absent"
+	for _, d := range Detectors() {
+		if d.ID() == retiredID {
+			t.Errorf("retired detector %q is registered again", retiredID)
+		}
+	}
+	if fx := FixerByID(retiredID); fx != nil {
+		t.Errorf("retired fixer %q is registered again", retiredID)
+	}
+}
+
+// --- FM 5: dev-version-build-integrity ------------------------------------
+
+func TestCliConfigDevVersion_DetectsDevBinary(t *testing.T) {
+	tmp := t.TempDir()
+	fakebin := filepath.Join(tmp, "fakebin")
+	// Stub `ao` that reports a dev version.
+	writeFile(t, filepath.Join(fakebin, "ao"), "#!/bin/sh\necho 'ao version dev'\n")
+	if err := os.Chmod(filepath.Join(fakebin, "ao"), 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Setenv("PATH", fakebin)
+
+	fs, err := devVersionBuildIntegrityDetector{}.Detect(&DetectEnv{})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	f := findByID(t, fs, fmDevVersionBuildIntegrity)
+	if f.Severity != "P2" {
+		t.Errorf("Severity = %q, want P2", f.Severity)
+	}
+	if !strings.Contains(f.Evidence.Query, `reported_version="dev"`) {
+		t.Errorf("Evidence.Query lacks reported_version=dev: %q", f.Evidence.Query)
+	}
+	if !strings.Contains(f.Evidence.Query, "suspect_version=true") {
+		t.Errorf("Evidence.Query lacks suspect_version=true: %q", f.Evidence.Query)
+	}
+	if !strings.Contains(f.Remediation.Command, "make build") {
+		t.Errorf("Remediation.Command lacks rebuild command: %q", f.Remediation.Command)
+	}
+}
+
+func TestCliConfigDevVersion_ReleaseBinaryYieldsNoFinding(t *testing.T) {
+	tmp := t.TempDir()
+	fakebin := filepath.Join(tmp, "fakebin")
+	writeFile(t, filepath.Join(fakebin, "ao"), "#!/bin/sh\necho 'ao version v2.40.0'\n")
+	if err := os.Chmod(filepath.Join(fakebin, "ao"), 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Setenv("PATH", fakebin)
+
+	fs, err := devVersionBuildIntegrityDetector{}.Detect(&DetectEnv{})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Fatalf("expected 0 findings for release version, got %d: %+v", len(fs), fs)
+	}
+}
+
+func TestCliConfigDevVersion_MultilineRcFallbackYieldsNoFinding(t *testing.T) {
+	tmp := t.TempDir()
+	fakebin := filepath.Join(tmp, "fakebin")
+	writeFile(t, filepath.Join(fakebin, "ao"), "#!/bin/sh\necho 'ao version 3.1.0-rc'\necho '  Go version: go1.26.3'\necho '  Platform: linux/amd64'\n")
+	if err := os.Chmod(filepath.Join(fakebin, "ao"), 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Setenv("PATH", fakebin)
+
+	if got := aoReportedVersion(); got != "3.1.0-rc" {
+		t.Fatalf("aoReportedVersion() = %q, want 3.1.0-rc", got)
+	}
+	fs, err := devVersionBuildIntegrityDetector{}.Detect(&DetectEnv{})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Fatalf("expected 0 findings for multiline rc fallback, got %d: %+v", len(fs), fs)
+	}
+}
+
+func TestCliConfigDevVersion_DuplicateAOEvidenceIncludesPerPathVersions(t *testing.T) {
+	tmp := t.TempDir()
+	first := filepath.Join(tmp, "first")
+	second := filepath.Join(tmp, "second")
+	writeFile(t, filepath.Join(first, "ao"), "#!/bin/sh\necho 'ao version 3.1.0-rc'\n")
+	writeFile(t, filepath.Join(second, "ao"), "#!/bin/sh\necho 'ao version 2.41.1'\n")
+	for _, path := range []string{filepath.Join(first, "ao"), filepath.Join(second, "ao")} {
+		if err := os.Chmod(path, 0o755); err != nil {
+			t.Fatalf("chmod %s: %v", path, err)
+		}
+	}
+	t.Setenv("PATH", first+string(os.PathListSeparator)+second)
+
+	fs, err := devVersionBuildIntegrityDetector{}.Detect(&DetectEnv{})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	f := findByID(t, fs, fmDevVersionBuildIntegrity)
+	if !strings.Contains(f.Evidence.Query, `reported_version="3.1.0-rc"`) {
+		t.Fatalf("Evidence.Query lacks primary version: %q", f.Evidence.Query)
+	}
+	if !strings.Contains(f.Evidence.Query, filepath.Join(first, "ao")+" (3.1.0-rc)") ||
+		!strings.Contains(f.Evidence.Query, filepath.Join(second, "ao")+" (2.41.1)") {
+		t.Fatalf("Evidence.Query lacks per-path versions: %q", f.Evidence.Query)
+	}
+}
+
+// TestCliConfigDevVersion_CoherentWithBinaryFreshness locks in the wave-4
+// residual-1 decision rule: inside a repo checkout the detector reuses the
+// legacy "Binary Freshness" resolution (cli/cmd/ao/main.go `var version`) and
+// a binary whose reported version equals the repo's declared version is a
+// healthy from-source build — a dev/rc-shaped version alone is NOT a finding.
+// The detector fires only on genuine drift (binary != declared repo version)
+// or on shadowed duplicate `ao` binaries. Outside any checkout a bare
+// dev-version binary stays a finding but is worded as informational-grade
+// ("from-source build"), never as a failure Binary Freshness would pass.
+func TestCliConfigDevVersion_CoherentWithBinaryFreshness(t *testing.T) {
+	writeRepo := func(t *testing.T, declared string) string {
+		t.Helper()
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "cli", "go.mod"), agentopsModuleLine+"\n\ngo 1.24\n")
+		writeFile(t, filepath.Join(root, "cli", "cmd", "ao", "main.go"),
+			"package main\n\nvar version = \""+declared+"\"\n")
+		return root
+	}
+	stubAO := func(t *testing.T, dir, reports string) {
+		t.Helper()
+		path := filepath.Join(dir, "ao")
+		writeFile(t, path, "#!/bin/sh\necho 'ao version "+reports+"'\n")
+		if err := os.Chmod(path, 0o755); err != nil {
+			t.Fatalf("chmod %s: %v", path, err)
+		}
+	}
+	tests := []struct {
+		name         string
+		declared     string // "" = outside any agentops checkout
+		reported     string
+		secondAO     string // "" = no shadowing duplicate
+		wantFinding  bool
+		wantTitleSub string
+		wantQuerySub []string
+	}{
+		{
+			name:     "dev build matching checkout declared version is healthy",
+			declared: "9.9.9-dev", reported: "9.9.9-dev",
+			wantFinding: false,
+		},
+		{
+			name:     "rc source fallback matching checkout is healthy",
+			declared: "3.3.0-rc", reported: "3.3.0-rc",
+			wantFinding: false,
+		},
+		{
+			name:     "release build of the declared rc series is healthy",
+			declared: "3.3.0-rc", reported: "3.3.0",
+			wantFinding: false,
+		},
+		{
+			name:     "git-describe binary inside checkout is genuine drift",
+			declared: "3.3.0-rc", reported: "v3.2.0-64-gabc123",
+			wantFinding:  true,
+			wantTitleSub: "drift",
+			wantQuerySub: []string{`repo_declared_version="3.3.0-rc"`, "drift_from_repo=true"},
+		},
+		{
+			name:     "stale release binary inside checkout is genuine drift",
+			declared: "3.3.0-rc", reported: "3.1.0",
+			wantFinding:  true,
+			wantTitleSub: "drift",
+			wantQuerySub: []string{`reported_version="3.1.0"`, "drift_from_repo=true"},
+		},
+		{
+			name:     "shadowed duplicates stay a finding even when versions match",
+			declared: "9.9.9-dev", reported: "9.9.9-dev", secondAO: "2.41.1",
+			wantFinding:  true,
+			wantTitleSub: "shadow",
+			wantQuerySub: []string{"shadowed=true", "drift_from_repo=false"},
+		},
+		{
+			name:     "outside checkout dev build is an informational from-source finding",
+			declared: "", reported: "dev",
+			wantFinding:  true,
+			wantTitleSub: "from-source build",
+			wantQuerySub: []string{`reported_version="dev"`, "suspect_version=true"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			fakebin := filepath.Join(tmp, "fakebin")
+			stubAO(t, fakebin, test.reported)
+			path := fakebin
+			if test.secondAO != "" {
+				secondbin := filepath.Join(tmp, "secondbin")
+				stubAO(t, secondbin, test.secondAO)
+				path = fakebin + string(os.PathListSeparator) + secondbin
+			}
+			t.Setenv("PATH", path)
+			env := &DetectEnv{}
+			if test.declared != "" {
+				env.RepoRoot = writeRepo(t, test.declared)
+			}
+			fs, err := devVersionBuildIntegrityDetector{}.Detect(env)
+			if err != nil {
+				t.Fatalf("Detect error: %v", err)
+			}
+			if !test.wantFinding {
+				if len(fs) != 0 {
+					t.Fatalf("expected 0 findings, got %d: %+v", len(fs), fs)
+				}
+				return
+			}
+			f := findByID(t, fs, fmDevVersionBuildIntegrity)
+			if !strings.Contains(f.Title, test.wantTitleSub) {
+				t.Errorf("Title = %q, want substring %q", f.Title, test.wantTitleSub)
+			}
+			for _, sub := range test.wantQuerySub {
+				if !strings.Contains(f.Evidence.Query, sub) {
+					t.Errorf("Evidence.Query lacks %q: %q", sub, f.Evidence.Query)
+				}
+			}
+			// Wording coherence: never call a non-release version a failure in
+			// a state where Binary Freshness passes; drift wording must name
+			// both versions so the operator sees the disagreement.
+			if strings.Contains(test.wantTitleSub, "drift") {
+				if !strings.Contains(f.Title, test.reported) || !strings.Contains(f.Title, test.declared) {
+					t.Errorf("drift Title must name both versions, got %q", f.Title)
+				}
+			}
+		})
+	}
+}
+
+func TestCliConfigDevVersion_FixerRefuses(t *testing.T) {
+	fx := FixerByID(fmDevVersionBuildIntegrity)
+	if fx == nil {
+		t.Fatal("fixer not registered")
+	}
+	res, err := fx.Fix(nil, nil, []Finding{{ID: fmDevVersionBuildIntegrity}})
+	if err == nil || res.Fixed {
+		t.Fatalf("Fix() = (%+v, %v), want refusal", res, err)
+	}
+	if !strings.Contains(err.Error(), "does not recompile or replace binaries") {
+		t.Errorf("error lacks recompile refusal text: %v", err)
+	}
+}
+
+// --- FM 6: stale-project-config-shadows-home ------------------------------
+
+func TestCliConfigStaleProjectConfig_DetectsShadowing(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	cwd := filepath.Join(tmp, "work")
+	writeFile(t, filepath.Join(home, ".agents", "ao", "config.yaml"),
+		"models:\n  default_tier: sonnet\n")
+	writeFile(t, filepath.Join(cwd, ".agents", "ao", "config.yaml"),
+		"models:\n  default_tier: haiku\n  deprecated_tier: opus\n")
+
+	env := &DetectEnv{HomeDir: home, CWD: cwd}
+	fs, err := staleProjectConfigDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	f := findByID(t, fs, fmStaleProjectConfig)
+	if f.Severity != "P3" {
+		t.Errorf("Severity = %q, want P3", f.Severity)
+	}
+	wantPath := filepath.Join(cwd, ".agents", "ao", "config.yaml")
+	if f.Evidence.File != wantPath {
+		t.Errorf("Evidence.File = %q, want %q", f.Evidence.File, wantPath)
+	}
+	if !strings.Contains(f.Evidence.Query, "models.default_tier") {
+		t.Errorf("Evidence.Query lacks shadowed key models.default_tier: %q", f.Evidence.Query)
+	}
+	if !strings.Contains(f.Evidence.Query, "models.deprecated_tier") {
+		t.Errorf("Evidence.Query lacks shadowed key models.deprecated_tier: %q", f.Evidence.Query)
+	}
+	if !strings.Contains(f.Remediation.Command, wantPath) {
+		t.Errorf("Remediation.Command does not name the stray file: %q", f.Remediation.Command)
+	}
+	if f.Remediation.AutoFixable {
+		t.Error("AutoFixable = true, want false")
+	}
+}
+
+func TestCliConfigStaleProjectConfig_NoProjectFileYieldsNoFinding(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	cwd := filepath.Join(tmp, "work")
+	writeFile(t, filepath.Join(home, ".agents", "ao", "config.yaml"),
+		"models:\n  default_tier: sonnet\n")
+
+	env := &DetectEnv{HomeDir: home, CWD: cwd}
+	fs, err := staleProjectConfigDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Fatalf("expected 0 findings with no project config, got %d: %+v", len(fs), fs)
+	}
+}
+
+func TestCliConfigStaleProjectConfig_InertProjectFileYieldsNoFinding(t *testing.T) {
+	tmp := t.TempDir()
+	home := filepath.Join(tmp, "home")
+	cwd := filepath.Join(tmp, "work")
+	// Project file matches home exactly — inert, not shadowing.
+	writeFile(t, filepath.Join(home, ".agents", "ao", "config.yaml"),
+		"models:\n  default_tier: sonnet\n")
+	writeFile(t, filepath.Join(cwd, ".agents", "ao", "config.yaml"),
+		"models:\n  default_tier: sonnet\n")
+
+	env := &DetectEnv{HomeDir: home, CWD: cwd}
+	fs, err := staleProjectConfigDetector{}.Detect(env)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Fatalf("expected 0 findings for inert project config, got %d: %+v", len(fs), fs)
+	}
+}
+
+func TestCliConfigStaleProjectConfig_FixerRefuses(t *testing.T) {
+	fx := FixerByID(fmStaleProjectConfig)
+	if fx == nil {
+		t.Fatal("fixer not registered")
+	}
+	res, err := fx.Fix(nil, nil, []Finding{{ID: fmStaleProjectConfig}})
+	if err == nil || res.Fixed {
+		t.Fatalf("Fix() = (%+v, %v), want refusal", res, err)
+	}
+	if !strings.Contains(err.Error(), "will not move a possibly-intentional user file") {
+		t.Errorf("error lacks file-move refusal text: %v", err)
+	}
+}
+
+// --- Registration sanity --------------------------------------------------
+
+func TestCliConfigAllFiveRegistered(t *testing.T) {
+	want := []string{
+		fmInvalidConfigYAML,
+		fmConfigFlagNotThreaded,
+		fmMissingRequiredCLI,
+		fmDevVersionBuildIntegrity,
+		fmStaleProjectConfig,
+	}
+	dets := make(map[string]bool)
+	for _, d := range Detectors() {
+		dets[d.ID()] = true
+	}
+	for _, id := range want {
+		if !dets[id] {
+			t.Errorf("detector %q not registered", id)
+		}
+		fx := FixerByID(id)
+		if fx == nil {
+			t.Errorf("fixer %q not registered", id)
+			continue
+		}
+		if fx.AutoFixable() {
+			t.Errorf("fixer %q AutoFixable() = true, want false (all cli-config FMs are detect-only)", id)
+		}
+	}
+}

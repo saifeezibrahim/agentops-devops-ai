@@ -1,0 +1,19 @@
+# Pinned MkDocs toolchain for https://boshu2.github.io/agentops/
+# Install: pip install -r requirements-docs.txt  (or: uv pip install -r requirements-docs.txt)
+
+mkdocs==1.6.1
+mkdocs-material==9.7.7
+mkdocs-material-extensions==1.3.1
+
+# Build-time content generation (skill catalog, CLI reference)
+mkdocs-gen-files==0.6.1
+mkdocs-literate-nav==0.6.3
+mkdocs-section-index==0.3.12
+mkdocs-include-markdown-plugin==7.3.0
+
+# Nice-to-haves
+REDACTED==1.6.0
+pymdown-extensions==12.1
+
+# Link checking
+linkchecker==10.6.0

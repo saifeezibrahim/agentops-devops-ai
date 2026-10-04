@@ -1,0 +1,20 @@
+{
+  "$schema": "../../../schemas/pack-quality-expectations.v1.schema.json",
+  "schema_version": 1,
+  "id": "REDACTED",
+  "retrieval_surface": "ao-skills-find",
+  "task": "The caller is about to act on a pending decision and wants to know whether it can be undone before deciding.",
+  "query": "is this live decision reversible",
+  "top_k": 3,
+  "expected_selected_ids": [
+    "plan"
+  ],
+  "critical_omitted_ids": [],
+  "forbidden_leaks": [
+    "^premortem$"
+  ],
+  "min_provenance_density": 1.0,
+  "max_tokens": 110,
+  "rationale": "Plan now evaluates the actual undo cost of a pending decision using existing caller authority. Premortem challenges a supplied plan and should not win this narrower reversibility question. The pair remains reciprocal with rq-02, where premortem must win a plan-challenge request.",
+  "notes": "Owner migrated from the retired one-way-door classifier; task, query, rank exclusions and token ceiling are unchanged. Historical ranker measurements remain measurements of the prior catalog."
+}

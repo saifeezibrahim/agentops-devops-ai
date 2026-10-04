@@ -1,0 +1,37 @@
+SHELL := /usr/bin/env bash
+
+.PHONY: local-ci local-ci-fast ci build test docs-check regen-all regen-check clean help
+
+# Default: run the release-grade local CI gate.
+# Note: scripts/ci-local-release.sh already includes build + test + release-binary validation.
+.DEFAULT_GOAL := local-ci
+
+local-ci: ## Run full local CI release gate (includes build and release binary validation)
+	./scripts/ci-local-release.sh
+
+local-ci-fast: ## Run the fast pre-tag code-correctness gate
+	./scripts/ci-local-release.sh --quick
+
+ci: local-ci ## Alias for local-ci
+
+build: ## Build ao CLI binary
+	$(MAKE) -C cli build
+
+test: ## Run CLI tests
+	$(MAKE) -C cli test
+
+docs-check: ## Run docs drift checks
+	./scripts/generate-cli-reference.sh --check
+	./tests/docs/validate-doc-release.sh
+
+regen-all: ## Regenerate every derived artifact after adding a skill/command (one-command finalizer)
+	bash ./scripts/regen-all.sh
+
+regen-check: ## Run the derived-artifact drift/gate sweep (no writes; pre-push gate)
+	bash ./scripts/regen-all.sh --check
+
+clean: ## Clean CLI build artifacts
+	$(MAKE) -C cli clean
+
+help: ## Show available targets
+	@awk 'BEGIN {FS = ":.*##"; printf "Targets:\n"} /^[a-zA-Z0-9_.-]+:.*##/ { printf "  %-14s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)

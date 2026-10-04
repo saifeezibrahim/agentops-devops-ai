@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "family": "init",
+  "freeze_sha": "REDACTED",
+  "ownership_sha256": "REDACTED",
+  "migration_state": "migrated",
+  "accepted_sha": "REDACTED"
+}

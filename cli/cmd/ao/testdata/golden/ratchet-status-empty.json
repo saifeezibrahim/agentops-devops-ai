@@ -1,0 +1,35 @@
+{
+  "chain_id": "golden-test-001",
+  "started": "2025-06-15T08:00:00Z",
+  "steps": [
+    {
+      "step": "research",
+      "status": "pending"
+    },
+    {
+      "step": "premortem",
+      "status": "pending"
+    },
+    {
+      "step": "plan",
+      "status": "pending"
+    },
+    {
+      "step": "implement",
+      "status": "pending"
+    },
+    {
+      "step": "crank",
+      "status": "pending"
+    },
+    {
+      "step": "vibe",
+      "status": "pending"
+    },
+    {
+      "step": "postmortem",
+      "status": "pending"
+    }
+  ],
+  "path": "/tmp/test/.agents/ao/chain.jsonl"
+}

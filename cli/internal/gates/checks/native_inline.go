@@ -1,0 +1,157 @@
+package checks
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/boshu2/agentops/cli/internal/gates"
+	"github.com/boshu2/agentops/cli/internal/ports"
+)
+
+// Native ports of the bash gate's INLINE checks (no backing script). ag-3n71 PB1.
+
+func init() {
+	// Every native check carries an explicit RepairHint phrased as something the
+	// reader can do from wherever they are. The derived fallback names the gate
+	// ID and the published docs; neither form may name a path that exists only
+	// inside an agentops source checkout.
+	gates.Register(gates.Check{ID: "go.vet", Tiers: gates.Fast | gates.Full, Match: []string{"cli/**", "go.mod", "go.sum"}, Blocking: true, Run: runGoVet,
+		RepairHint: "run 'go vet ./...' in the cli module and fix what it reports"})
+	gates.Register(gates.Check{ID: "changelog.sync", Tiers: gates.Fast | gates.Full, Match: []string{"CHANGELOG.md", "docs/CHANGELOG.md"}, Blocking: true, Run: runChangelogSync,
+		RepairHint: "make the two changelog copies identical: cp CHANGELOG.md docs/CHANGELOG.md"})
+	gates.Register(gates.Check{ID: "shell.shellcheck-changed", Tiers: gates.Fast | gates.Full, Match: []string{"**/*.sh"}, Blocking: true, Run: runShellcheckChanged,
+		RepairHint: "run 'shellcheck -S warning <file>' on each reported shell file and fix the warnings (install shellcheck if it is missing)"})
+	gates.Register(gates.Check{ID: "learning.coherence", Tiers: gates.Fast | gates.Full, Match: learningRootGlobs, Blocking: true, Run: runLearningCoherence,
+		RepairHint: "give each reported learning file YAML frontmatter: a leading '---' line at the top"})
+}
+
+// changedFilesFor preserves the routed fast scope, including a valid empty
+// set. Full mode retains these native checks' origin/main...HEAD change scope
+// and propagates discovery failures rather than mistaking them for an empty
+// diff. Both modes exclude installed skill copies, which are not repo source.
+func changedFilesFor(ctx context.Context, rc gates.RunContext) ([]string, error) {
+	if rc.Mode != gates.Full {
+		return gates.FilterInstalledSkillCopies(rc.ChangedFiles), nil
+	}
+	files, err := gates.NewGitChangedFiles(rc.RepoRoot).Changed(ctx, gates.Scope(gates.ScopeRangePrefix+"origin/main...HEAD"))
+	if err != nil {
+		return nil, fmt.Errorf("discover full-mode changed files: %w", err)
+	}
+	return gates.FilterInstalledSkillCopies(files), nil
+}
+
+func runGoVet(ctx context.Context, rc gates.RunContext) (ports.GateVerdict, error) {
+	cmd := exec.CommandContext(ctx, "go", "vet", "./...")
+	cmd.Dir = filepath.Join(rc.RepoRoot, "cli")
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Run(); err != nil {
+		return ports.GateVerdict{Status: ports.GateStatusFail, Reason: "go vet ./... failed", LogTail: tail(out.String(), 4096)}, nil
+	}
+	return ports.GateVerdict{Status: ports.GateStatusPass, Reason: "go vet ./... ok"}, nil
+}
+
+func runChangelogSync(_ context.Context, rc gates.RunContext) (ports.GateVerdict, error) {
+	root := filepath.Join(rc.RepoRoot, "CHANGELOG.md")
+	docs := filepath.Join(rc.RepoRoot, "docs", "CHANGELOG.md")
+	rb, rerr := os.ReadFile(root)
+	db, derr := os.ReadFile(docs)
+	if rerr != nil {
+		return ports.GateVerdict{Status: ports.GateStatusFail, Reason: fmt.Sprintf("read CHANGELOG.md: %v", rerr)}, nil
+	}
+	if derr != nil {
+		return ports.GateVerdict{Status: ports.GateStatusFail, Reason: fmt.Sprintf("read docs/CHANGELOG.md: %v", derr)}, nil
+	}
+	if !bytes.Equal(rb, db) {
+		return ports.GateVerdict{Status: ports.GateStatusFail, Reason: "CHANGELOG.md != docs/CHANGELOG.md (run: cp CHANGELOG.md docs/CHANGELOG.md)"}, nil
+	}
+	return ports.GateVerdict{Status: ports.GateStatusPass, Reason: "CHANGELOG in sync"}, nil
+}
+
+func runShellcheckChanged(ctx context.Context, rc gates.RunContext) (ports.GateVerdict, error) {
+	if _, err := exec.LookPath("shellcheck"); err != nil {
+		// Fail closed: this is a BLOCKING check over shell files. A SKIP clears a
+		// blocking check (orchestrator.isBlockingFail), so returning SKIP here
+		// would let a missing shellcheck silently pass changed .sh files. Treat
+		// absence like ScriptRunner treats UNKNOWN — a FAIL (SECURITY-MED).
+		return ports.GateVerdict{Status: ports.GateStatusFail, Reason: "shellcheck not installed: cannot verify changed shell files (install shellcheck)"}, nil
+	}
+	var failed []string
+	var logs bytes.Buffer
+	files, err := changedFilesFor(ctx, rc)
+	if err != nil {
+		return ports.GateVerdict{}, err
+	}
+	for _, f := range files {
+		if !strings.HasSuffix(f, ".sh") {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(rc.RepoRoot, f)); err != nil {
+			continue // deleted
+		}
+		cmd := exec.CommandContext(ctx, "shellcheck", "-S", "warning", f)
+		cmd.Dir = rc.RepoRoot
+		var out bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &out
+		if err := cmd.Run(); err != nil {
+			failed = append(failed, f)
+			logs.WriteString(out.String())
+		}
+	}
+	if len(failed) > 0 {
+		return ports.GateVerdict{Status: ports.GateStatusFail, Reason: "shellcheck failed: " + strings.Join(failed, ", "), LogTail: tail(logs.String(), 4096)}, nil
+	}
+	return ports.GateVerdict{Status: ports.GateStatusPass, Reason: "shellcheck clean (changed .sh)"}, nil
+}
+
+// Learnings live under BOTH roots: the canonical .agents/ao/learnings (where
+// doctor's split fixer migrates files) and the legacy .agents/learnings. The
+// routing globs and the Run func prefix filter must stay in lockstep — a root
+// present in one but not the other either never routes or routes-then-skips.
+var (
+	learningRootPrefixes = []string{".agents/ao/learnings/", ".agents/learnings/"}
+	learningRootGlobs    = []string{".agents/ao/learnings/**", ".agents/learnings/**"}
+)
+
+// underLearningRoot reports whether a repo-relative path sits under either
+// learnings root.
+func underLearningRoot(f string) bool {
+	for _, p := range learningRootPrefixes {
+		if strings.HasPrefix(f, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func runLearningCoherence(ctx context.Context, rc gates.RunContext) (ports.GateVerdict, error) {
+	var missing []string
+	files, err := changedFilesFor(ctx, rc)
+	if err != nil {
+		return ports.GateVerdict{}, err
+	}
+	for _, f := range files {
+		if !underLearningRoot(f) || !strings.HasSuffix(f, ".md") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(rc.RepoRoot, f))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue // deleted
+			}
+			return ports.GateVerdict{Status: ports.GateStatusFail, Reason: fmt.Sprintf("read learning %s: %v", f, err)}, nil
+		}
+		if !bytes.HasPrefix(data, []byte("---")) {
+			missing = append(missing, f)
+		}
+	}
+	if len(missing) > 0 {
+		return ports.GateVerdict{Status: ports.GateStatusFail, Reason: "learnings missing frontmatter: " + strings.Join(missing, ", ")}, nil
+	}
+	return ports.GateVerdict{Status: ports.GateStatusPass, Reason: "learning frontmatter ok"}, nil
+}

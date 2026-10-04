@@ -1,0 +1,91 @@
+<!-- generated from skills/*/SKILL.md metadata -->
+
+# Skill Router
+
+Choose guidance for a concrete task need; no skill is mandatory.
+A clear task can proceed in the native agent. Read a skill only when its description fits.
+Names and descriptions below come from each source SKILL.md; explicit invocation remains available.
+
+## Primary entrypoints
+
+These are independent choices, not a required sequence.
+Advisory review does not replace Validate's fresh acceptance judgment.
+
+| Skill | Use it for |
+|---|---|
+| [plan](https://github.com/boshu2/agentops/blob/main/skills/plan/SKILL.md) | Define intended behavior, review write scope and assess reversible decisions. Use when: discovery needs clarification or resumption before one complete slice; stop once actionable. |
+| [implement](https://github.com/boshu2/agentops/blob/main/skills/implement/SKILL.md) | Implement changes, repairs or waves; return per-lane evidence. Use when: coding, service operations, reliability, delivery, incident recovery, resilience or toil is authorized. |
+| [review](https://github.com/boshu2/agentops/blob/main/skills/review/SKILL.md) | Give advisory feedback on a plan, design or code. Use when: suggestions, tradeoffs or a second look are wanted. Not for acceptance or write scope; use Validate or Plan. |
+| [validate](https://github.com/boshu2/agentops/blob/main/skills/validate/SKILL.md) | Freshly judge a finished change and its claims against original acceptance. Use when: acceptance verdict or independent proof is sought. Clarify generic checks or readiness first. |
+| [orchestrate](https://github.com/boshu2/agentops/blob/main/skills/orchestrate/SKILL.md) | Coordinate authorized workers, prerequisites, isolated scopes and review capacity. Use when: dispatching, recovering or routing feedback. Not for implementation or judgment. |
+| [memory](https://github.com/boshu2/agentops/blob/main/skills/memory/SKILL.md) | Find reviewed context, capture evidence or curate maintained claims. Use when: prior evidence can change an action, or learning is requested; no mandatory recall or lesson. |
+
+## Engineering specialists
+
+| Skill | Use it for |
+|---|---|
+| [doc](https://github.com/boshu2/agentops/blob/main/skills/doc/SKILL.md) | Write grounded docs, READMEs, repo instructions or continuity handoffs. Use when: these documents are requested; no reports as a routine completion ritual. |
+| [domain](https://github.com/boshu2/agentops/blob/main/skills/domain/SKILL.md) | Clarify domain terms, bounded contexts and repository conventions. Use when: naming, rule ownership or Go and other language standards are unclear; avoid a broad survey. |
+| [refactor](https://github.com/boshu2/agentops/blob/main/skills/refactor/SKILL.md) | Simplify structure, interfaces or responsibilities while preserving behavior. Use when: a focused refactor is requested; feature changes need their own intent. |
+| [research](https://github.com/boshu2/agentops/blob/main/skills/research/SKILL.md) | Trace code or test a recurring pattern to answer one cited question. Use when: uncertainty needs evidence. Not for external feature teardowns; use reverse-engineer. |
+| [reverse-engineer](https://github.com/boshu2/agentops/blob/main/skills/reverse-engineer/SKILL.md) | Tear down an authorized competitor repo, binary or product into a feature inventory and adoption choices. Use when: comparing an external system; local questions go to Research. |
+| [security](https://github.com/boshu2/agentops/blob/main/skills/security/SKILL.md) | Review code or scan for security vulnerabilities, secrets, dependencies and prompt risks. Use when: concrete exposure needs assessment; never silently change policy. |
+| [skill-builder](https://github.com/boshu2/agentops/blob/main/skills/skill-builder/SKILL.md) | Create, adapt, consolidate or repair skill packages and projections. Use when: authoring guidance, descriptions or structure; Skill Eval measures behavioral benefit. |
+| [skill-eval](https://github.com/boshu2/agentops/blob/main/skills/skill-eval/SKILL.md) | Measure whether a skill helps a named task or needs revision or removal. Use when: a bounded routing or coding evaluation is requested; conformance alone cannot show benefit. |
+| [test](https://github.com/boshu2/agentops/blob/main/skills/test/SKILL.md) | Write behavioral tests, practice TDD or inspect important coverage gaps. Use when: test design or missing proof needs work; running an existing suite needs no skill. |
+
+## Deliberate planning and review strategies
+
+| Skill | Use it for |
+|---|---|
+| [council](https://github.com/boshu2/agentops/blob/main/skills/council/SKILL.md) | Compare model perspectives for brainstorming, planning, validation, idea duels or interviews. Use when: independent proposals or judgments need optional bounded debate. |
+| [craft-goal](https://github.com/boshu2/agentops/blob/main/skills/craft-goal/SKILL.md) | Draft or lint a bounded persistent goal above a bead graph of RPI experiments. Use when: this goal workflow is explicitly selected; shaping a single change belongs to Plan. |
+| [idea-genie](https://github.com/boshu2/agentops/blob/main/skills/idea-genie/SKILL.md) | Generate evidenced options or challenge an idea. Use when: deciding what to build or comparing alternatives; exploration does not authorize implementation. |
+| [interview](https://github.com/boshu2/agentops/blob/main/skills/interview/SKILL.md) | Interview the caller one question at a time to settle a big outcome before agents work alone. Use when: shaping a goal or large RPI. Not for one question on one slice; use Plan. |
+| [navigate](https://github.com/boshu2/agentops/blob/main/skills/navigate/SKILL.md) | Pick the next wave on a bead graph and keep the graph honest toward frozen acceptance. Use when: a goal starts a wave, or you ask what is next on an epic. |
+| [postmortem](https://github.com/boshu2/agentops/blob/main/skills/postmortem/SKILL.md) | Analyze outcomes or an interim cutoff. Use when: a postmortem is explicitly requested; consumes available judgment, never gates code acceptance or requires a lesson. |
+| [premortem](https://github.com/boshu2/agentops/blob/main/skills/premortem/SKILL.md) | Challenge a rollout plan with one fresh judge before implementation; identify what could make it fail. Not for finished-code judgment. Triggers: "one judge", "challenge this plan". |
+| [reality-check](https://github.com/boshu2/agentops/blob/main/skills/reality-check/SKILL.md) | Audit claimed state, goals or native status. Use when: a claim audit or snapshot is requested. Clarify advice versus acceptance for ambiguous checking or readiness requests. |
+| [rpi](https://github.com/boshu2/agentops/blob/main/skills/rpi/SKILL.md) | Apply the outcome-to-judgment charter. Use when: the caller explicitly selects RPI; ordinary coding, delegation and native goals do not require this workflow. |
+
+## Explicit tool and runtime adapters
+
+| Skill | Use it for |
+|---|---|
+| [agent-native](https://github.com/boshu2/agentops/blob/main/skills/agent-native/SKILL.md) | Dispatch independent tasks to parallel workers or selected persistent roles. Use when: delegation is authorized with disjoint scopes; execution does not validate output. |
+| [agy-native](https://github.com/boshu2/agentops/blob/main/skills/agy-native/SKILL.md) | Run a supplied task in AGY Antigravity and collect its result. Use when: the caller selects AGY; never a fallback for native coding. |
+| [codex-exec](https://github.com/boshu2/agentops/blob/main/skills/codex-exec/SKILL.md) | Run one prompt through headless Codex and capture its result. Use when: requesting a single noninteractive Codex process. Not for worker batches or retries. |
+| [using-gc](https://github.com/boshu2/agentops/blob/main/skills/using-gc/SKILL.md) | Operate Gas City through its Mayor, registry packs and native run state. Use when: the caller explicitly selects Gas City; factory completion does not replace independent judgment. |
+
+## Complete inventory
+
+| Skill | Tier | Disposition | Hard dependencies | Capabilities | Effects |
+|---|---|---|---|---|---|
+| `agent-native` | meta | `keep_optional_adapter` | - | `role_dispatch`, `observe_workers`, `handoff`, `dispatch_once` | `manage_runtime_sessions`, `invoke_selected_executor` |
+| `agy-native` | cross-vendor | `keep_optional_adapter` | - | `dispatch_explicit_packet`, `provide_fresh_context` | `start_agy_session` |
+| `codex-exec` | orchestration | `keep_optional_adapter` | - | `codex_exec` | `run_codex_process`, `REDACTED` |
+| `council` | judgment | `keep_strategy` | - | `collect_independent_judgments`, `synthesize_disagreement`, `bounded_deliberation`, `duel_scored_ideas`, `answer_interview_panel` | `write_advisory_council_report` |
+| `craft-goal` | judgment | `keep_strategy` | - | `goal_prompt_design`, `goal_prompt_lint` | - |
+| `doc` | product | `keep_specialist` | - | `doc`, `initialize_missing_docs`, `write_session_handoff` | `write_documentation`, `write_requested_handoff`, `REDACTED` |
+| `domain` | knowledge | `keep_specialist` | - | `domain`, `clarify_domain_language`, `reconcile_domain_names` | `REDACTED` |
+| `idea-genie` | execution | `keep_strategy` | - | `generate_evidenced_options`, `dueling_idea_genies` | `write_idea_portfolio` |
+| `implement` | execution | `keep` | - | `execute_one_experiment`, `collect_factual_evidence` | `modify_declared_subject`, `derive_subject_manifest` |
+| `interview` | execution | `keep_strategy` | - | `interview_caller`, `settle_caller_choices`, `write_acceptance_examples`, `settle_domain_terms` | `update_intent_source` |
+| `memory` | execution | `keep_off_path` | - | `recall_applicable_context`, `mine_supported_observations`, `curate_topic_pages`, `toil_mining` | `write_protected_drafts`, `update_authorized_topic_pages`, `write_requested_toil_report` |
+| `navigate` | execution | `keep_strategy` | - | `observe_work_graph`, `select_next_wave`, `ratchet_work_graph`, `report_graph_hygiene` | `update_native_graph` |
+| `orchestrate` | execution | `keep` | - | `coordinate_native_work`, `recover_assignments`, `reconcile_feedback` | `dispatch_authorized_workers`, `update_native_handoffs` |
+| `plan` | execution | `keep` | - | `shape_intent`, `define_acceptance`, `bound_write_scope`, `resume_discovery` | `update_intent_source` |
+| `postmortem` | judgment | `keep_strategy` | - | `postmortem` | `write_postmortem_report` |
+| `premortem` | judgment | `keep_strategy` | - | `challenge_plan` | `write_advisory_plan_review` |
+| `reality-check` | judgment | `keep_strategy` | - | `compare_claim_to_evidence`, `measure_declared_goals`, `report_native_status` | `write_advisory_gap_report`, `write_goal_snapshot`, `write_requested_rendered_spec` |
+| `refactor` | execution | `keep_specialist` | - | `refactor` | `modify_source_files` |
+| `research` | execution | `keep_specialist` | - | `research`, `codebase_recon`, `pattern_mining` | `write_research_report`, `write_recon_pack`, `write_pattern_evidence` |
+| `reverse-engineer` | execution | `keep_specialist` | - | `reverse_engineer` | `clone_upstream_repo`, `authorized_binary_execution`, `write_teardown_artifacts` |
+| `review` | judgment | `keep` | - | `review_advisory`, `identify_supported_findings`, `report_review_gaps` | - |
+| `rpi` | meta | `keep_strategy` | `plan`, `implement`, `validate` | `own_authorized_outcome`, `report` | `dispatch_core_phases` |
+| `security` | product | `keep_specialist` | - | `security` | `write_scan_artifacts` |
+| `skill-builder` | meta | `keep_specialist` | - | `skill_builder`, `heal_skill`, `export_skill`, `distill_expertise` | `write_skill_source`, `write_build_report`, `regenerate_skill_projections`, `repair_skill_projections`, `REDACTED`, `write_advisory_proposal` |
+| `skill-eval` | meta | `keep_specialist` | - | `author_seeded_probe`, `run_probe_tier`, `evaluate_skill_decision` | `write_probe_package`, `dispatch_probe_producer` |
+| `test` | execution | `keep_specialist` | - | `test` | `write_test_files`, `write_test_evidence`, `modify_source_files` |
+| `using-gc` | execution | `keep_optional_adapter` | - | `dispatch_explicit_packet`, `observe_gc_runtime`, `inspect_pack_registries`, `drive_mayor_door` | `operate_gas_city`, `configure_codex_trust` |
+| `validate` | judgment | `keep` | - | `compute_subject_identity`, `judge_acceptance`, `return_validation_result`, `persist_verdict` | `write_verdict_artifact` |

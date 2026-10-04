@@ -1,0 +1,5 @@
+{"arm":"control","position":1,"prompt":{"content_base64":"REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDciB1bmFuc3dlcmVkLgo=","path":"control.prompt","sha256":"sha256:REDACTED"},"rep":1,"type":"agentops.probe-input.v1"}
+{"thread_id":"REDACTED","type":"thread.started"}
+{"type":"turn.started"}
+{"item":{"id":"item_0","text":"1: DECIDE\n2: DECIDE\n3: DECIDE\n4: ROUTE\n5: DECIDE\n6: DECIDE\n7: ROUTE\n8: DECIDE\n9: ROUTE\n10: DECIDE","type":"agent_message"},"type":"item.completed"}
+{"type":"turn.completed","usage":{"cache_write_input_tokens":0,"cached_input_tokens":15104,"input_tokens":16469,"output_tokens":206,"reasoning_output_tokens":151}}

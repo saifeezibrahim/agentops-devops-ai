@@ -1,0 +1,932 @@
+// Package config provides configuration management for AgentOps.
+// Configuration is loaded from (highest to lowest priority):
+// 1. Command-line flags
+// 2. Environment variables (AGENTOPS_*)
+// 3. Project config (.agents/ao/config.yaml in cwd)
+// 4. Home config (~/.agents/ao/config.yaml)
+// 5. Defaults
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	"github.com/boshu2/agentops/cli/internal/storage"
+	"gopkg.in/yaml.v3"
+)
+
+// Config holds all AgentOps configuration.
+type Config struct {
+	// Output controls the default output format (table, json, yaml).
+	Output string `yaml:"output" json:"output"`
+
+	// BaseDir is the AgentOps data directory (default: .agents/ao).
+	BaseDir string `yaml:"base_dir" json:"base_dir"`
+
+	// Verbose enables verbose output.
+	Verbose bool `yaml:"verbose" json:"verbose"`
+
+	// Forge settings
+	Forge ForgeConfig `yaml:"forge" json:"forge"`
+
+	// Search settings
+	Search SearchConfig `yaml:"search" json:"search"`
+
+	// Paths settings for artifact locations (configurable, not hardcoded)
+	Paths PathsConfig `yaml:"paths" json:"paths"`
+
+	// RPI settings
+	RPI RPIConfig `yaml:"rpi" json:"rpi"`
+
+	// Models settings
+	Models ModelsConfig `yaml:"models" json:"models"`
+
+	// Context explicitly selects external CDLC storage; it has no defaults.
+	Context ContextConfig `yaml:"context" json:"context"`
+
+	// Compile settings for ao compile headless runtime preference.
+	Compile CompileConfig `yaml:"compile" json:"compile"`
+}
+
+// CompileConfig holds ao compile runtime preferences.
+type CompileConfig struct {
+	// PreferredRuntime overrides the auto-detect runtime selection.
+	// When set, ao compile uses this value instead of auto-detecting a
+	// local `codex` binary. Useful for users who want to run Ollama
+	// even when Codex CLI is installed. Accepted values: "codex-cli",
+	// "ollama", "claude", "openai", or empty (use auto-detect).
+	//
+	// Precedence (high → low):
+	//   1. --runtime flag
+	//   2. AGENTOPS_COMPILE_RUNTIME env var
+	//   3. compile.preferred_runtime in ~/.agents/ao/config.yaml
+	//   4. auto-detect (codex binary on PATH -> codex-cli)
+	//   5. empty (preflight will fail with an actionable error)
+	PreferredRuntime string `yaml:"preferred_runtime" json:"preferred_runtime"`
+}
+
+// RPIConfig holds RPI-specific settings.
+type RPIConfig struct {
+	// WorktreeMode controls worktree behavior for phased runs.
+	// Values: "auto" (default, creates worktree), "always" (force worktree), "never" (no worktree).
+	WorktreeMode string `yaml:"worktree_mode" json:"worktree_mode"`
+	// RuntimeMode controls phased executor selection.
+	// Values: "auto" (default), "direct", "stream".
+	RuntimeMode string `yaml:"runtime_mode" json:"runtime_mode"`
+	// RuntimeCommand is the CLI command used to spawn phase sessions.
+	// Default: "claude".
+	RuntimeCommand string `yaml:"runtime_command" json:"runtime_command"`
+	// AOCommand is the CLI command used for ao subcommands in orchestration.
+	// Default: "ao".
+	AOCommand string `yaml:"ao_command" json:"ao_command"`
+	// BDCommand is the CLI command used for beads operations in orchestration.
+	// Default: "bd".
+	BDCommand string `yaml:"bd_command" json:"bd_command"`
+	// TmuxCommand is the CLI command used for tmux liveness probes.
+	// Default: "tmux".
+	TmuxCommand string `yaml:"tmux_command" json:"tmux_command"`
+}
+
+// PathsConfig holds configurable paths for artifact locations.
+// Fixes G5: paths are now configurable, not hardcoded.
+type PathsConfig struct {
+	// LearningsDir is where learning artifacts are stored.
+	// Default: .agents/learnings
+	LearningsDir string `yaml:"learnings_dir" json:"learnings_dir"`
+
+	// PatternsDir is where pattern artifacts are stored.
+	// Default: .agents/patterns
+	PatternsDir string `yaml:"patterns_dir" json:"patterns_dir"`
+
+	// ClaudePlansDir is where Claude's native plans go.
+	// Default: ~/.claude/plans
+	ClaudePlansDir string `yaml:"claude_plans_dir" json:"claude_plans_dir"`
+
+	// CitationsFile is where citation events are stored.
+	// Default: .agents/ao/citations.jsonl
+	CitationsFile string `yaml:"citations_file" json:"citations_file"`
+
+	// TranscriptsDir is where Claude transcripts are located.
+	// Default: ~/.claude/projects
+	TranscriptsDir string `yaml:"transcripts_dir" json:"transcripts_dir"`
+
+	// GlobalLearningsDir is where cross-repo learnings are stored.
+	// Default: ~/.agents/learnings
+	GlobalLearningsDir string `yaml:"global_learnings_dir" json:"global_learnings_dir"`
+
+	// GlobalPatternsDir is where cross-repo patterns are stored.
+	// Default: ~/.agents/patterns
+	GlobalPatternsDir string `yaml:"global_patterns_dir" json:"global_patterns_dir"`
+
+	// GlobalWeight is the rank multiplier for global results (0.0-1.0).
+	// Applied AFTER composite scoring. Lower values make local results win more aggressively.
+	// Default: 0.8
+	GlobalWeight float64 `yaml:"global_weight" json:"global_weight"`
+
+	// HarvestRoots is the list of directories to scan for cross-rig knowledge harvest.
+	// Default: [~/gt]
+	HarvestRoots []string `yaml:"harvest_roots" json:"harvest_roots"`
+}
+
+// ModelsConfig holds model tier configuration.
+//
+// Deprecated: dead section. The `ao config models` subcommand that displayed
+// and wrote these fields was removed; nothing outside config plumbing
+// (defaults, applyEnv, merge, ResolveTier) reads them. The struct stays
+// parseable so existing config files with a models: section do not break.
+type ModelsConfig struct {
+	// DefaultTier is the default model tier (quality, balanced, budget, inherit).
+	DefaultTier string `yaml:"default_tier" json:"default_tier"`
+
+	// Tiers maps tier name to model config.
+	Tiers map[string]TierConfig `yaml:"tiers" json:"tiers"`
+
+	// SkillOverrides maps skill name to tier name.
+	SkillOverrides map[string]string `yaml:"skill_overrides" json:"skill_overrides"`
+}
+
+// TierConfig holds model names for a tier.
+type TierConfig struct {
+	// Claude is the Claude model name (opus, sonnet, haiku).
+	Claude string `yaml:"claude" json:"claude"`
+
+	// Codex is the Codex model name.
+	Codex string `yaml:"codex" json:"codex"`
+}
+
+// ValidTiers is the set of recognized model cost tier names.
+var ValidTiers = map[string]bool{
+	"quality":  true,
+	"balanced": true,
+	"budget":   true,
+	"inherit":  true,
+}
+
+// ResolveTier returns the effective tier for a given skill.
+// Checks SkillOverrides first, falls back to DefaultTier.
+// "inherit" means use DefaultTier; if DefaultTier is also "inherit" or empty,
+// falls back to "balanced". Unrecognized tier names fall back to "balanced".
+func (c *Config) ResolveTier(skillName string) string {
+	tier := c.Models.DefaultTier
+	if override, ok := c.Models.SkillOverrides[skillName]; ok && override != "" {
+		if override != "inherit" {
+			tier = override
+		}
+		// "inherit" in override → use DefaultTier (fall through)
+	}
+	if tier == "" || tier == "inherit" {
+		return "balanced"
+	}
+	if !ValidTiers[tier] {
+		return "balanced"
+	}
+	return tier
+}
+
+// ForgeConfig holds forge-specific settings.
+type ForgeConfig struct {
+	// MaxContentLength is the truncation limit (0 = no truncation).
+	MaxContentLength int `yaml:"max_content_length" json:"max_content_length"`
+
+	// ProgressInterval is how often to show progress (in lines).
+	ProgressInterval int `yaml:"progress_interval" json:"progress_interval"`
+}
+
+// SearchConfig holds search-specific settings.
+type SearchConfig struct {
+	// DefaultLimit is the default number of results.
+	DefaultLimit int `yaml:"default_limit" json:"default_limit"`
+
+	// UseSmartConnections enables Smart Connections when available.
+	//
+	// Deprecated: dead knob. Nothing outside config plumbing (defaults,
+	// AGENTOPS_NO_SC applyEnv, merge) reads this field, so toggling it has
+	// no effect. It is no longer documented in `ao config` help; the field
+	// stays parseable so existing config files do not break.
+	UseSmartConnections bool `yaml:"use_smart_connections" json:"use_smart_connections"`
+
+	// UseSmartConnectionsSet tracks whether UseSmartConnections was explicitly set.
+	// This allows distinguishing between "not set" and "explicitly set to false".
+	UseSmartConnectionsSet bool `yaml:"-" json:"-"`
+}
+
+// Default config values (used in resolution and validation).
+const (
+	defaultOutput  = "table"
+	defaultBaseDir = ".agents/ao"
+)
+
+// Default returns the default configuration.
+func Default() *Config {
+	homeDir, _ := os.UserHomeDir()
+	return &Config{
+		Output:  defaultOutput,
+		BaseDir: defaultBaseDir,
+		Verbose: false,
+		Forge: ForgeConfig{
+			MaxContentLength: 0,
+			ProgressInterval: 1000,
+		},
+		Search: SearchConfig{
+			DefaultLimit:        10,
+			UseSmartConnections: true,
+		},
+		RPI: RPIConfig{
+			WorktreeMode:   "auto",
+			RuntimeMode:    "auto",
+			RuntimeCommand: "claude",
+			AOCommand:      "ao",
+			BDCommand:      "bd",
+			TmuxCommand:    "tmux",
+		},
+		Models: ModelsConfig{
+			DefaultTier: "balanced",
+			Tiers: map[string]TierConfig{
+				"quality":  {Claude: "opus", Codex: ""},
+				"balanced": {Claude: "sonnet", Codex: ""},
+				"budget":   {Claude: "haiku", Codex: ""},
+			},
+			SkillOverrides: map[string]string{},
+		},
+		Paths: PathsConfig{
+			LearningsDir:       ".agents/learnings",
+			PatternsDir:        ".agents/patterns",
+			ClaudePlansDir:     filepath.Join(homeDir, ".claude", "plans"),
+			CitationsFile:      ".agents/ao/citations.jsonl",
+			TranscriptsDir:     filepath.Join(homeDir, ".claude", "projects"),
+			GlobalLearningsDir: filepath.Join(homeDir, ".agents", "learnings"),
+			GlobalPatternsDir:  filepath.Join(homeDir, ".agents", "patterns"),
+			GlobalWeight:       0.8,
+			HarvestRoots:       []string{filepath.Join(homeDir, "gt")},
+		},
+	}
+}
+
+// Load loads configuration with proper precedence.
+// Priority: flags > env > project > home > defaults
+func Load(flagOverrides *Config) (*Config, error) {
+	cfg := Default()
+
+	// An explicit --config / AGENTOPS_CONFIG override IS the config file (per the
+	// documented contract "the config file (default: ~/.agents/ao/config.yaml)"):
+	// load ONLY that file over defaults, and skip the ambient home + cwd-project
+	// discovery. Otherwise home settings the explicit file is silent on would leak
+	// underneath it (fm-cli-config-config-flag-not-threaded).
+	if override := strings.TrimSpace(os.Getenv("AGENTOPS_CONFIG")); override != "" {
+		oc, err := loadFromPath(override)
+		if err != nil {
+			// The user explicitly named THIS file as the config; a load failure
+			// (missing/unreadable/invalid) must fail CLOSED, never silently fall
+			// back to defaults+env — otherwise --config proves nothing was read.
+			// (Auto-discovered home/project configs below keep warn+fallback.)
+			return nil, fmt.Errorf("config: explicit --config %q could not be loaded: %w", override, err)
+		}
+		if oc != nil {
+			cfg = merge(cfg, oc)
+		}
+		cfg = applyEnv(cfg)
+		if flagOverrides != nil {
+			cfg = merge(cfg, flagOverrides)
+		}
+		return cfg, nil
+	}
+
+	// Load home config
+	homeConfig, _ := loadFromPath(homeConfigReadPath())
+	if homeConfig != nil {
+		cfg = merge(cfg, homeConfig)
+	}
+
+	// Load project config
+	projectConfig, _ := loadFromPath(projectConfigReadPath())
+	if projectConfig != nil {
+		cfg = merge(cfg, projectConfig)
+	}
+
+	// Apply environment variables
+	cfg = applyEnv(cfg)
+
+	// Apply flag overrides
+	if flagOverrides != nil {
+		cfg = merge(cfg, flagOverrides)
+	}
+
+	return cfg, nil
+}
+
+// homeConfigPath returns the home config path.
+func homeConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".agents", "ao", "config.yaml")
+}
+
+// legacyWarned tracks which legacy config paths already produced a
+// deprecation warning, so repeated loads in one process warn once per path.
+var (
+	legacyWarnedMu sync.Mutex
+	legacyWarned   = map[string]bool{}
+)
+
+// withLegacyFallback returns newPath when a file exists there. When it does
+// not and legacyPath holds a file, it returns legacyPath and warns once on
+// stderr: the pre-3.3 `.agentops/` location is read-only compatibility for
+// this release. Writes (Save) always target the new path.
+func withLegacyFallback(newPath, legacyPath string) string {
+	path, _ := withLegacyFallbackInfo(newPath, legacyPath)
+	return path
+}
+
+// withLegacyFallbackInfo is withLegacyFallback plus a report of whether the
+// deprecated legacy fallback is the path actually being read, so display
+// surfaces (ao config --show) can label it instead of contradicting the
+// deprecation warning.
+func withLegacyFallbackInfo(newPath, legacyPath string) (string, bool) {
+	if newPath == "" || legacyPath == "" {
+		return newPath, false
+	}
+	if _, err := os.Stat(newPath); err == nil {
+		return newPath, false
+	}
+	if _, err := os.Stat(legacyPath); err != nil {
+		return newPath, false
+	}
+	warnLegacyConfigOnce(legacyPath, newPath)
+	return legacyPath, true
+}
+
+func warnLegacyConfigOnce(legacyPath, newPath string) {
+	legacyWarnedMu.Lock()
+	if legacyWarned[legacyPath] {
+		legacyWarnedMu.Unlock()
+		return
+	}
+	legacyWarned[legacyPath] = true
+	legacyWarnedMu.Unlock()
+
+	fmt.Fprintf(os.Stderr, "Warning: reading deprecated config path %s; move it to %s\n", legacyPath, newPath)
+}
+
+// homeConfigReadPath returns the home config path for reads, falling back to
+// the legacy ~/.agentops/config.yaml location when the new path is absent.
+func homeConfigReadPath() string {
+	path, _ := homeConfigReadInfo()
+	return path
+}
+
+// homeConfigReadInfo returns the home config path actually consulted for
+// reads plus whether that path is the deprecated legacy fallback
+// (~/.agentops/config.yaml).
+func homeConfigReadInfo() (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", false
+	}
+	return withLegacyFallbackInfo(
+		filepath.Join(home, ".agents", "ao", "config.yaml"),
+		filepath.Join(home, ".agentops", "config.yaml"),
+	)
+}
+
+// projectConfigReadPath returns the project config path for reads, falling
+// back to the legacy ./.agentops/config.yaml location when the new path is
+// absent. An explicit AGENTOPS_CONFIG override is returned verbatim.
+func projectConfigReadPath() string {
+	path, _ := projectConfigReadInfo()
+	return path
+}
+
+// projectConfigReadInfo returns the project config path actually consulted
+// for reads plus whether that path is the deprecated legacy fallback
+// (./.agentops/config.yaml). An explicit AGENTOPS_CONFIG override is
+// returned verbatim and is never legacy.
+func projectConfigReadInfo() (string, bool) {
+	newPath, legacyPath := projectConfigPaths()
+	if legacyPath == "" {
+		return newPath, false
+	}
+	return withLegacyFallbackInfo(newPath, legacyPath)
+}
+
+// getwdFunc is the function used to get the current working directory.
+// It can be overridden in tests to simulate os.Getwd failures.
+var getwdFunc = os.Getwd
+
+// projectConfigPath returns the project config path.
+func projectConfigPath() string {
+	path, _ := projectConfigPaths()
+	return path
+}
+
+// projectConfigPaths returns the canonical write path and optional legacy read
+// fallback in one working-directory snapshot. An explicit AGENTOPS_CONFIG is
+// authoritative for both reads and writes and therefore has no fallback.
+func projectConfigPaths() (string, string) {
+	if override := strings.TrimSpace(os.Getenv("AGENTOPS_CONFIG")); override != "" {
+		return override, ""
+	}
+	cwd, err := getwdFunc()
+	if err != nil {
+		return "", ""
+	}
+	return filepath.Join(cwd, ".agents", "ao", "config.yaml"),
+		filepath.Join(cwd, ".agentops", "config.yaml")
+}
+
+// loadHomeConfig loads the home directory config, returning nil on error.
+func loadHomeConfig() *Config {
+	cfg, _ := loadFromPath(homeConfigReadPath())
+	return cfg
+}
+
+// loadProjectConfig loads the project config, returning nil on error.
+func loadProjectConfig() *Config {
+	cfg, _ := loadFromPath(projectConfigReadPath())
+	return cfg
+}
+
+// loadFromPath loads config from a YAML file.
+func loadFromPath(path string) (*Config, error) {
+	if path == "" {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		// File exists but has invalid YAML. Surface the error to stderr so
+		// users don't silently fall through to auto-detect defaults, then
+		// return the error so callers can decide whether to continue. The
+		// two loader entry points (loadHomeConfig/loadProjectConfig) discard
+		// the error and fall back, preserving backward compat.
+		fmt.Fprintf(os.Stderr, "Warning: invalid YAML in %s: %v\n", path, err)
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+// applyEnvStr sets dst from the named environment variable when non-empty.
+func applyEnvStr(dst *string, envKey string) {
+	if v := os.Getenv(envKey); v != "" {
+		*dst = v
+	}
+}
+
+// envBool returns true when the named environment variable is "true" or "1".
+func envBool(envKey string) bool {
+	v := os.Getenv(envKey)
+	return v == "true" || v == "1"
+}
+
+// applyEnv applies environment variable overrides.
+func applyEnv(cfg *Config) *Config {
+	applyContextEnv(&cfg.Context)
+	applyEnvStr(&cfg.Output, "AGENTOPS_OUTPUT")
+	applyEnvStr(&cfg.BaseDir, "AGENTOPS_BASE_DIR")
+	if envBool("AGENTOPS_VERBOSE") {
+		cfg.Verbose = true
+	}
+	if envBool("AGENTOPS_NO_SC") {
+		cfg.Search.UseSmartConnections = false
+		cfg.Search.UseSmartConnectionsSet = true
+	}
+	applyEnvStr(&cfg.RPI.WorktreeMode, "AGENTOPS_RPI_WORKTREE_MODE")
+	applyEnvStr(&cfg.RPI.RuntimeMode, "AGENTOPS_RPI_RUNTIME")
+	applyEnvStr(&cfg.RPI.RuntimeMode, "AGENTOPS_RPI_RUNTIME_MODE")
+	applyEnvStr(&cfg.RPI.RuntimeCommand, "AGENTOPS_RPI_RUNTIME_COMMAND")
+	applyEnvStr(&cfg.RPI.AOCommand, "AGENTOPS_RPI_AO_COMMAND")
+	applyEnvStr(&cfg.RPI.BDCommand, "AGENTOPS_RPI_BD_COMMAND")
+	applyEnvStr(&cfg.RPI.TmuxCommand, "AGENTOPS_RPI_TMUX_COMMAND")
+	applyEnvStr(&cfg.Models.DefaultTier, "AGENTOPS_MODEL_TIER")
+	if v := os.Getenv("AGENTOPS_COUNCIL_MODEL_TIER"); v != "" {
+		if cfg.Models.SkillOverrides == nil {
+			cfg.Models.SkillOverrides = make(map[string]string)
+		}
+		cfg.Models.SkillOverrides["council"] = v
+	}
+	return cfg
+}
+
+// mergeStr overwrites dst with src when src is non-empty.
+func mergeStr(dst *string, src string) {
+	if src != "" {
+		*dst = src
+	}
+}
+
+// mergeInt overwrites dst with src when src is non-zero.
+func mergeInt(dst *int, src int) {
+	if src != 0 {
+		*dst = src
+	}
+}
+
+// merge merges src into dst, with src values taking precedence.
+// For booleans, we need explicit tracking via pointer or separate "set" flag.
+func merge(dst, src *Config) *Config {
+	mergeStr(&dst.Output, src.Output)
+	mergeStr(&dst.BaseDir, src.BaseDir)
+	if src.Verbose {
+		dst.Verbose = true
+	}
+
+	mergeForge(&dst.Forge, &src.Forge)
+	mergeSearch(&dst.Search, &src.Search)
+	mergeRPI(&dst.RPI, &src.RPI)
+	mergeModels(&dst.Models, &src.Models)
+	mergePaths(&dst.Paths, &src.Paths)
+	mergeContext(&dst.Context, src.Context)
+
+	return dst
+}
+
+// mergeForge merges forge-specific config fields.
+func mergeForge(dst, src *ForgeConfig) {
+	mergeInt(&dst.MaxContentLength, src.MaxContentLength)
+	mergeInt(&dst.ProgressInterval, src.ProgressInterval)
+}
+
+// mergeSearch merges search-specific config fields.
+func mergeSearch(dst, src *SearchConfig) {
+	mergeInt(&dst.DefaultLimit, src.DefaultLimit)
+	// UseSmartConnections: src.UseSmartConnectionsSet tracks if explicitly configured
+	if src.UseSmartConnectionsSet {
+		dst.UseSmartConnections = src.UseSmartConnections
+		dst.UseSmartConnectionsSet = true
+	}
+}
+
+// mergeRPI merges RPI-specific config fields.
+func mergeRPI(dst, src *RPIConfig) {
+	mergeStr(&dst.WorktreeMode, src.WorktreeMode)
+	mergeStr(&dst.RuntimeMode, src.RuntimeMode)
+	mergeStr(&dst.RuntimeCommand, src.RuntimeCommand)
+	mergeStr(&dst.AOCommand, src.AOCommand)
+	mergeStr(&dst.BDCommand, src.BDCommand)
+	mergeStr(&dst.TmuxCommand, src.TmuxCommand)
+}
+
+// mergeModels merges models config fields.
+func mergeModels(dst, src *ModelsConfig) {
+	mergeStr(&dst.DefaultTier, src.DefaultTier)
+	if len(src.Tiers) > 0 {
+		if dst.Tiers == nil {
+			dst.Tiers = make(map[string]TierConfig)
+		}
+		for k, v := range src.Tiers {
+			dst.Tiers[k] = v
+		}
+	}
+	if len(src.SkillOverrides) > 0 {
+		if dst.SkillOverrides == nil {
+			dst.SkillOverrides = make(map[string]string)
+		}
+		for k, v := range src.SkillOverrides {
+			dst.SkillOverrides[k] = v
+		}
+	}
+}
+
+// mergePaths merges path config fields (G5: configurable paths, not hardcoded).
+func mergePaths(dst, src *PathsConfig) {
+	mergeStr(&dst.LearningsDir, src.LearningsDir)
+	mergeStr(&dst.PatternsDir, src.PatternsDir)
+	mergeStr(&dst.ClaudePlansDir, src.ClaudePlansDir)
+	mergeStr(&dst.CitationsFile, src.CitationsFile)
+	mergeStr(&dst.TranscriptsDir, src.TranscriptsDir)
+	mergeStr(&dst.GlobalLearningsDir, src.GlobalLearningsDir)
+	mergeStr(&dst.GlobalPatternsDir, src.GlobalPatternsDir)
+	if src.GlobalWeight > 0 {
+		dst.GlobalWeight = src.GlobalWeight
+	}
+	if len(src.HarvestRoots) > 0 {
+		dst.HarvestRoots = src.HarvestRoots
+	}
+}
+
+// Save writes the given config to the project config file.
+// It merges with existing config to preserve fields not being changed.
+func Save(cfg *Config) error {
+	path, legacyPath := projectConfigPaths()
+	if path == "" {
+		return fmt.Errorf("determining project config path: could not resolve working directory")
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("creating config directory %s: %w", dir, err)
+	}
+
+	return withConfigLock(path, func() error {
+		data, err := prepareSave(path, legacyPath, cfg)
+		if err != nil {
+			return err
+		}
+		if err := storage.AtomicWriteFile(path, data, 0o644); err != nil {
+			return fmt.Errorf("writing config %s: %w", path, err)
+		}
+		return nil
+	})
+}
+
+// PreviewSave validates the exact read-merge-marshal path used by Save without
+// creating directories, locks, or files. A missing target is a valid new config.
+func PreviewSave(cfg *Config) error {
+	path, legacyPath := projectConfigPaths()
+	if path == "" {
+		return fmt.Errorf("determining project config path: could not resolve working directory")
+	}
+	_, err := prepareSave(path, legacyPath, cfg)
+	return err
+}
+
+func prepareSave(path, legacyPath string, cfg *Config) ([]byte, error) {
+	readPath := path
+	if legacyPath != "" {
+		readPath = withLegacyFallback(path, legacyPath)
+	}
+	existing, err := loadFromPath(readPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("loading existing config %s: %w", readPath, err)
+	}
+	if existing != nil {
+		existing = merge(existing, cfg)
+	} else {
+		existing = cfg
+	}
+	data, err := yaml.Marshal(existing)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling config: %w", err)
+	}
+	return data, nil
+}
+
+// withConfigLock serializes the complete read-merge-write transaction across
+// goroutines and ao processes. The sidecar is only a lock token; config bytes
+// are committed separately through the canonical atomic writer.
+func withConfigLock(path string, fn func() error) (err error) {
+	lockPath := path + ".lock"
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return fmt.Errorf("creating config lock directory: %w", err)
+	}
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("opening config lock: %w", err)
+	}
+	locked := false
+	defer func() {
+		if locked {
+			if unlockErr := unlockConfigFile(file); unlockErr != nil && err == nil {
+				err = fmt.Errorf("unlocking config: %w", unlockErr)
+			}
+		}
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("closing config lock: %w", closeErr)
+		}
+	}()
+	if err := lockConfigFile(file); err != nil {
+		return fmt.Errorf("locking config: %w", err)
+	}
+	locked = true
+	return fn()
+}
+
+// Source represents where a config value came from.
+type Source string
+
+const (
+	SourceDefault Source = "default"
+	SourceHome    Source = "~/.agents/ao/config.yaml"
+	SourceProject Source = ".agents/ao/config.yaml"
+	SourceEnv     Source = "environment"
+	SourceFlag    Source = "flag"
+	// SourceHomeLegacy labels values read through the deprecated home
+	// fallback so --show matches the deprecation warning instead of
+	// attributing them to a path that does not exist.
+	SourceHomeLegacy Source = "~/.agentops/config.yaml (deprecated location)"
+	// SourceProjectLegacy labels values read through the deprecated project
+	// fallback (./.agentops/config.yaml).
+	SourceProjectLegacy Source = ".agentops/config.yaml (deprecated location)"
+)
+
+// getEnvString returns the value and whether the env var was set.
+func getEnvString(key string) (string, bool) {
+	v := os.Getenv(key)
+	return v, v != ""
+}
+
+// getEnvBool returns the boolean value and whether it was truthy.
+func getEnvBool(key string) (bool, bool) {
+	v := os.Getenv(key)
+	if v == "true" || v == "1" {
+		return true, true
+	}
+	return false, false
+}
+
+// resolveStringField resolves a string through the precedence chain.
+// Returns the resolved value and its source.
+func resolveStringField(home, project, env, flag, def string) resolved {
+	// Start with default
+	result := resolved{Value: def, Source: SourceDefault}
+
+	// Home config overrides default
+	if home != "" {
+		result = resolved{Value: home, Source: SourceHome}
+	}
+
+	// Project config overrides home
+	if project != "" {
+		result = resolved{Value: project, Source: SourceProject}
+	}
+
+	// Environment overrides project
+	if env != "" {
+		result = resolved{Value: env, Source: SourceEnv}
+	}
+
+	// Flag overrides everything (if set)
+	if flag != "" {
+		result = resolved{Value: flag, Source: SourceFlag}
+	}
+
+	return result
+}
+
+// ResolvedConfig shows config values with their sources.
+//
+// The RPI* fields are excluded from serialization (`json:"-"`): no `ao rpi`
+// command exists, so `ao config --show` must not render resolved values for a
+// subsystem a user cannot invoke. The Dream block was removed with the
+// overnight subsystem; unknown `dream:` keys in existing config files still
+// parse and are ignored.
+type ResolvedConfig struct {
+	Output            resolved `json:"output"`
+	BaseDir           resolved `json:"base_dir"`
+	Verbose           resolved `json:"verbose"`
+	RPIWorktreeMode   resolved `json:"-"`
+	RPIRuntimeMode    resolved `json:"-"`
+	RPIRuntimeCommand resolved `json:"-"`
+	RPIAOCommand      resolved `json:"-"`
+	RPIBDCommand      resolved `json:"-"`
+	RPITmuxCommand    resolved `json:"-"`
+	ModelsDefaultTier resolved `json:"models_default_tier"`
+}
+
+type resolved struct {
+	Value  any    `json:"value"`
+	Source Source `json:"source"`
+}
+
+// configFields holds extracted string fields from a Config for resolution.
+type configFields struct {
+	output, baseDir                 string
+	verbose                         bool
+	rpiWorktreeMode, rpiRuntimeMode string
+	rpiRuntimeCommand, rpiAOCommand string
+	rpiBDCommand, rpiTmuxCommand    string
+	modelsDefaultTier               string
+}
+
+// extractFields pulls resolution-relevant fields from a Config.
+// Returns zero-value fields when cfg is nil.
+func extractFields(cfg *Config) configFields {
+	if cfg == nil {
+		return configFields{}
+	}
+	return configFields{
+		output:            cfg.Output,
+		baseDir:           cfg.BaseDir,
+		verbose:           cfg.Verbose,
+		rpiWorktreeMode:   cfg.RPI.WorktreeMode,
+		rpiRuntimeMode:    cfg.RPI.RuntimeMode,
+		rpiRuntimeCommand: cfg.RPI.RuntimeCommand,
+		rpiAOCommand:      cfg.RPI.AOCommand,
+		rpiBDCommand:      cfg.RPI.BDCommand,
+		rpiTmuxCommand:    cfg.RPI.TmuxCommand,
+		modelsDefaultTier: cfg.Models.DefaultTier,
+	}
+}
+
+// envFields holds environment variable values for resolution.
+type envFields struct {
+	output, baseDir                 string
+	verbose                         bool
+	verboseSet                      bool
+	rpiWorktreeMode, rpiRuntimeMode string
+	rpiRuntimeCommand, rpiAOCommand string
+	rpiBDCommand, rpiTmuxCommand    string
+	modelsDefaultTier               string
+}
+
+// loadEnvFields reads all resolution-relevant environment variables.
+func loadEnvFields() envFields {
+	ef := envFields{}
+	ef.output, _ = getEnvString("AGENTOPS_OUTPUT")
+	ef.baseDir, _ = getEnvString("AGENTOPS_BASE_DIR")
+	ef.verbose, ef.verboseSet = getEnvBool("AGENTOPS_VERBOSE")
+	ef.rpiWorktreeMode, _ = getEnvString("AGENTOPS_RPI_WORKTREE_MODE")
+	ef.rpiRuntimeMode, _ = getEnvString("AGENTOPS_RPI_RUNTIME")
+	if modeOverride, ok := getEnvString("AGENTOPS_RPI_RUNTIME_MODE"); ok {
+		ef.rpiRuntimeMode = modeOverride
+	}
+	ef.rpiRuntimeCommand, _ = getEnvString("AGENTOPS_RPI_RUNTIME_COMMAND")
+	ef.rpiAOCommand, _ = getEnvString("AGENTOPS_RPI_AO_COMMAND")
+	ef.rpiBDCommand, _ = getEnvString("AGENTOPS_RPI_BD_COMMAND")
+	ef.rpiTmuxCommand, _ = getEnvString("AGENTOPS_RPI_TMUX_COMMAND")
+	ef.modelsDefaultTier, _ = getEnvString("AGENTOPS_MODEL_TIER")
+	return ef
+}
+
+// resolveVerbose resolves the verbose flag through the precedence chain.
+func resolveVerbose(home, project configFields, env envFields, flagVerbose bool) resolved {
+	r := resolved{Value: false, Source: SourceDefault}
+	if home.verbose {
+		r = resolved{Value: true, Source: SourceHome}
+	}
+	if project.verbose {
+		r = resolved{Value: true, Source: SourceProject}
+	}
+	if env.verboseSet && env.verbose {
+		r = resolved{Value: true, Source: SourceEnv}
+	}
+	if flagVerbose {
+		r = resolved{Value: true, Source: SourceFlag}
+	}
+	return r
+}
+
+// Resolve returns configuration with source tracking.
+// Uses precedence chain: flags > env > project > home > defaults.
+func Resolve(flagOutput, flagBaseDir string, flagVerbose bool) *ResolvedConfig {
+	// An explicit --config / AGENTOPS_CONFIG override IS the config file: load ONLY
+	// that file as the project layer and skip the home layer, so home settings the
+	// explicit file is silent on do not leak underneath (matches Load()). Resolve
+	// has no error channel, so a failed explicit override is surfaced as a warning
+	// here (Load() is the authoritative fail-closed loader).
+	var home, project configFields
+	var homeLegacy, projectLegacy bool
+	if override := strings.TrimSpace(os.Getenv("AGENTOPS_CONFIG")); override != "" {
+		oc, err := loadFromPath(override)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: explicit --config %q could not be loaded: %v\n", override, err)
+		}
+		project = extractFields(oc)
+	} else {
+		_, homeLegacy = homeConfigReadInfo()
+		_, projectLegacy = projectConfigReadInfo()
+		home = extractFields(loadHomeConfig())
+		project = extractFields(loadProjectConfig())
+	}
+	env := loadEnvFields()
+
+	rc := &ResolvedConfig{
+		Output:            resolveStringField(home.output, project.output, env.output, flagOutput, defaultOutput),
+		BaseDir:           resolveStringField(home.baseDir, project.baseDir, env.baseDir, flagBaseDir, defaultBaseDir),
+		Verbose:           resolveVerbose(home, project, env, flagVerbose),
+		RPIWorktreeMode:   resolveStringField(home.rpiWorktreeMode, project.rpiWorktreeMode, env.rpiWorktreeMode, "", "auto"),
+		RPIRuntimeMode:    resolveStringField(home.rpiRuntimeMode, project.rpiRuntimeMode, env.rpiRuntimeMode, "", "auto"),
+		RPIRuntimeCommand: resolveStringField(home.rpiRuntimeCommand, project.rpiRuntimeCommand, env.rpiRuntimeCommand, "", "claude"),
+		RPIAOCommand:      resolveStringField(home.rpiAOCommand, project.rpiAOCommand, env.rpiAOCommand, "", "ao"),
+		RPIBDCommand:      resolveStringField(home.rpiBDCommand, project.rpiBDCommand, env.rpiBDCommand, "", "bd"),
+		RPITmuxCommand:    resolveStringField(home.rpiTmuxCommand, project.rpiTmuxCommand, env.rpiTmuxCommand, "", "tmux"),
+		ModelsDefaultTier: resolveStringField(home.modelsDefaultTier, project.modelsDefaultTier, env.modelsDefaultTier, "", "balanced"),
+	}
+	// When a layer was read through the deprecated fallback path, attribute
+	// its values to the path actually read so --show agrees with the
+	// deprecation warning instead of citing a file that does not exist.
+	if homeLegacy {
+		rc.relabelSource(SourceHome, SourceHomeLegacy)
+	}
+	if projectLegacy {
+		rc.relabelSource(SourceProject, SourceProjectLegacy)
+	}
+	return rc
+}
+
+// relabelSource rewrites every resolved field attributed to from so it is
+// attributed to to. Used to mark values loaded via a deprecated legacy
+// config location.
+func (rc *ResolvedConfig) relabelSource(from, to Source) {
+	fields := []*resolved{
+		&rc.Output, &rc.BaseDir, &rc.Verbose,
+		&rc.RPIWorktreeMode, &rc.RPIRuntimeMode, &rc.RPIRuntimeCommand,
+		&rc.RPIAOCommand, &rc.RPIBDCommand, &rc.RPITmuxCommand,
+		&rc.ModelsDefaultTier,
+	}
+	for _, field := range fields {
+		if field.Source == from {
+			field.Source = to
+		}
+	}
+}

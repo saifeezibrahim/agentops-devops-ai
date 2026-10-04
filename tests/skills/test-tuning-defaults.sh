@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PREMORTEM="$ROOT/skills/premortem/SKILL.md"
+POSTMORTEM="$ROOT/skills/postmortem/SKILL.md"
+DUELING="$ROOT/skills/idea-genie/SKILL.md"
+PLAN="$ROOT/skills/plan/SKILL.md"
+
+grep -Fq 'optional plan-challenge strategy' "$PREMORTEM"
+grep -Fq 'does not authorize readiness' "$PREMORTEM"
+grep -Fq 'dependencies: []' "$PREMORTEM"
+grep -Fq 'dependencies: []' "$POSTMORTEM"
+grep -Fq 'advisory evidence for Plan' "$DUELING"
+grep -Fq 'Emit no readiness' "$DUELING"
+# Plan now shapes caller-owned intent without imposing an experiment count.
+grep -Fq 'acceptance already supplied in the conversation or bead' "$PLAN"
+grep -Fq 'Stop planning once the implementer can act and the validator can judge' "$PLAN"
+
+for path in \
+  "$ROOT/skills/discovery" \
+  "$ROOT/skills/goal-design" \
+  "$ROOT/skills/behavior-first-planning"; do
+  [[ ! -e "$path" ]]
+done
+
+echo 'optional strategy defaults: PASS'

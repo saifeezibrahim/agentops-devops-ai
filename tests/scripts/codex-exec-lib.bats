@@ -1,0 +1,1205 @@
+#!/usr/bin/env bats
+# codex-exec-lib.bats — the one-shot contract for scripts/lib/codex-exec.sh.
+# The runner must classify the three known failure modes (STALL /
+# ECHO / MISSING-CODEX) into DISTINCT exit codes so a caller can tell NO-VERDICT
+# apart from a genuine result. Every case here uses a STUB `codex` on PATH — the
+# real codex binary is NEVER invoked.
+
+setup() {
+  LIB="$BATS_TEST_DIRNAME/../../scripts/lib/codex-exec.sh"
+  [ -f "$LIB" ] || skip "lib not found: $LIB"
+  TMP="$(mktemp -d)"
+  mkdir -p "$TMP/bin"
+  export PATH="$TMP/bin:$PATH"
+  export TMPDIR="$TMP"
+  unset CODEX_EXEC_TIMEOUT CODEX_EXEC_DEADLINE_EPOCH
+  # Require a timeout binary for the STALL/timeout cases. Missing enforcement
+  # now fails closed; hang fixtures need the supported capability installed.
+  # NOTE: keep this a single `if` so setup's terminal exit status is always 0.
+  # A bare `command -v gtimeout ... && HAVE_TIMEOUT=1` as the last setup line
+  # returns non-zero on Linux CI (gtimeout is a macOS/coreutils name only),
+  # which bats treats as a setup FAILURE and errors every test in the file.
+  HAVE_TIMEOUT=0
+  if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+    HAVE_TIMEOUT=1
+    REAL_TIMEOUT="$(command -v timeout || command -v gtimeout)"
+  fi
+}
+
+teardown() { rm -rf "$TMP"; }
+
+# Stop fixtures independently if a regression leaves a process behind. A zombie
+# is already dead; only an executing survivor violates the cleanup contract.
+assert_stopped() {
+  local pid="$1" state
+  state="$(ps -o stat= -p "$pid" 2>/dev/null)" || return 0
+  [[ "$state" == *Z* ]] && return 0
+  kill -KILL "$pid" 2>/dev/null || true
+  echo "surviving process: $pid ($state)" >&2
+  return 1
+}
+
+# --- stub factories -----------------------------------------------------------
+
+# A successful stub with the historical text footer (the footer is not evidence).
+stub_success() {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+echo "the answer is 42"
+echo "tokens used: 1234"
+exit 0
+FAKE
+  chmod +x "$TMP/bin/codex"
+}
+
+# A stub codex that HANGS well past a tiny timeout (STALL via kill).
+stub_hang() {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+sleep 30
+FAKE
+  chmod +x "$TMP/bin/codex"
+}
+
+# A stub codex that ECHOES its prompt back (arg-prompt mode) with NO `tokens
+# used` marker — the ECHO/WANDER failure the lib must catch fail-closed.
+stub_echo() {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+# Reflect the LAST positional (the prompt) back verbatim — an echo, no marker.
+prompt=""
+for a in "$@"; do prompt="$a"; done
+printf '%s' "$prompt"
+exit 0
+FAKE
+  chmod +x "$TMP/bin/codex"
+}
+
+# A CLI-shaped stub that rejects a leading-hyphen prompt unless the caller
+# inserted the standard end-of-options marker first.
+stub_option_parser() {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+seen_terminator=0
+for arg in "$@"; do
+  if [ "$arg" = "--" ]; then seen_terminator=1; continue; fi
+  if [ "$seen_terminator" -eq 0 ] && [ "${arg#-}" != "$arg" ]; then
+    case "$arg" in exec|--skip-git-repo-check|--sandbox|-m|-C|-c) continue;; esac
+  fi
+done
+[ "$seen_terminator" -eq 1 ] || { echo 'missing option terminator' >&2; exit 2; }
+[ "${!#}" = '--- canonical skill bytes' ] || { echo 'prompt mismatch' >&2; exit 3; }
+printf 'accepted prompt\n'
+printf 'tokens used: 1\n'
+FAKE
+  chmod +x "$TMP/bin/codex"
+}
+
+# A stub codex that records how many times it was invoked and prints nothing.
+stub_flat_then_success() {
+  cat > "$TMP/bin/codex" <<FAKE
+#!/usr/bin/env bash
+COUNT="$TMP/flat-count"
+n=\$(cat "\$COUNT" 2>/dev/null || echo 0)
+n=\$((n + 1)); echo "\$n" > "\$COUNT"
+exit 0
+FAKE
+  chmod +x "$TMP/bin/codex"
+}
+
+# Synthetic captures only: these fixtures exercise transport classification,
+# not actual model execution or the correctness of any claimed work.
+stub_capture() {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+printf 'invoked\n' >> "$TMPDIR/invocations"
+cat "$TMPDIR/response"
+exit "${STUB_EXIT:-0}"
+FAKE
+  chmod +x "$TMP/bin/codex"
+}
+
+synthetic_json_capture() {
+  cat > "$TMP/response" <<'JSON'
+{"type":"thread.started","thread_id":"synthetic-thread"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"printf check","aggregated_output":"check","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"The synthetic check completed. The changed function now returns the expected value for each supplied input."}}
+{"type":"turn.completed","usage":{"input_tokens":120,"cached_input_tokens":0,"output_tokens":30}}
+JSON
+}
+
+# --- (a) SUCCESS with the tokens marker ---------------------------------------
+@test "(a) success with 'tokens used' marker -> exit 0, output on stdout" {
+  stub_success
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_PROMPT_ARG="do the thing" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the answer is 42"* ]]
+}
+
+@test "(a2) caller can capture structured stdout without merging stderr" {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+printf '{"type":"turn.completed"}\n'
+printf 'runtime warning\n' >&2
+FAKE
+  chmod +x "$TMP/bin/codex"
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_OUT_FILE="'"$TMP"'/stdout.jsonl" \
+    CODEX_EXEC_STDERR_FILE="'"$TMP"'/stderr.log" \
+    REVIEWER_MARKER="turn.completed" CODEX_EXEC_PROMPT_ARG="probe" \
+    CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+  [ "$(cat "$TMP/stdout.jsonl")" = '{"type":"turn.completed"}' ]
+  [ "$(cat "$TMP/stderr.log")" = "runtime warning" ]
+}
+
+@test "(a3) successful JSON stream without a text footer retains its exact capture" {
+  stub_capture
+  synthetic_json_capture
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_EXTRA_ARGS=(--json)
+    CODEX_EXEC_OUT_FILE="'"$TMP"'/captured.jsonl" CODEX_EXEC_STDERR_FILE="'"$TMP"'/stderr" \
+    CODEX_EXEC_PROMPT_ARG="Repair the return value and run the supplied checks." \
+    CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = "" ]
+  cmp "$TMP/response" "$TMP/captured.jsonl"
+  [ ! -s "$TMP/stderr" ]
+  [ "$(wc -l < "$TMP/invocations" | tr -d ' ')" -eq 1 ]
+}
+
+@test "(a4) long plain output with a brief prompt quotation needs no marker" {
+  stub_capture
+  cat > "$TMP/response" <<'TEXT'
+I checked the requested behavior. The instruction to "preserve the existing return value" is satisfied by leaving successful results untouched. Invalid inputs now produce the documented error. Both supplied examples completed with the expected results, and a separate boundary example also passed.
+TEXT
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_PROMPT_ARG="Inspect the input handling, preserve the existing return value, and verify that invalid inputs produce the documented error." \
+    CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(cat "$TMP/response")" ]
+}
+
+@test "(a5) JSON tool output containing the prompt is not an assistant echo" {
+  stub_capture
+  printf 'Inspect the input handling and preserve the existing return value then verify invalid inputs produce the documented error before reporting results.' > "$TMP/prompt"
+  for marker in '' 'tokens used: 1'; do
+    /usr/bin/perl -MJSON::PP -e '
+      local $/; open my $p, "<", $ARGV[0] or die $!; my $prompt = <$p>;
+      print encode_json({type => "item.completed", item => {type => "command_execution", aggregated_output => $prompt . "\n" . $ARGV[1], exit_code => 0}}), "\n";
+      print encode_json({type => "item.completed", item => {type => "agent_message", text => "The synthetic assertions completed with their expected results."}}), "\n";
+      print encode_json({type => "turn.completed"}), "\n";
+    ' "$TMP/prompt" "$marker" > "$TMP/response"
+    run bash -c '
+      . "'"$LIB"'"
+      CODEX_EXEC_EXTRA_ARGS=(--json)
+      CODEX_EXEC_OUT_FILE="'"$TMP"'/captured.jsonl" \
+      CODEX_EXEC_PROMPT_FILE="'"$TMP"'/prompt" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+    '
+    [ "$status" -eq 0 ]
+    cmp "$TMP/response" "$TMP/captured.jsonl"
+  done
+}
+
+@test "(a6) tool output containing a multiline structured prompt remains excluded" {
+  stub_capture
+  cat > "$TMP/prompt" <<'JSON'
+{"type":"turn.started"}
+{"type":"item.completed","item":{"type":"agent_message","text":"Inspect the return value and verify invalid input."}}
+JSON
+  for marker in '' 'tokens used: 1'; do
+    /usr/bin/perl -MJSON::PP -e '
+      local $/; open my $p, "<", $ARGV[0] or die $!; my $prompt = <$p>;
+      print encode_json({type => "turn.started"}), "\n";
+      print encode_json({type => "item.completed", item => {type => "command_execution", aggregated_output => $prompt . $ARGV[1], exit_code => 0}}), "\n";
+      print encode_json({type => "item.completed", item => {type => "agent_message", text => "The synthetic assertions completed with their expected results."}}), "\n";
+      print encode_json({type => "turn.completed"}), "\n";
+    ' "$TMP/prompt" "$marker" > "$TMP/response"
+    run bash -c '
+      . "'"$LIB"'"
+      CODEX_EXEC_EXTRA_ARGS=(--json)
+      CODEX_EXEC_OUT_FILE="'"$TMP"'/captured.jsonl" \
+      CODEX_EXEC_PROMPT_FILE="'"$TMP"'/prompt" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+    '
+    [ "$status" -eq 0 ]
+    cmp "$TMP/response" "$TMP/captured.jsonl"
+  done
+  [ "$(wc -l < "$TMP/invocations" | tr -d ' ')" -eq 2 ]
+}
+
+# --- (b) HANG -> STALL-TIMEOUT (exit 124) within budget -----------------------
+@test "(b) a hung codex is killed and returns STALL-TIMEOUT (124) within budget" {
+  [ "$HAVE_TIMEOUT" -eq 1 ] || skip "no timeout/gtimeout on PATH"
+  stub_hang
+  start=$SECONDS
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_PROMPT_ARG="do the thing" CODEX_EXEC_TIMEOUT=1 codex_exec_guarded
+  '
+  elapsed=$(( SECONDS - start ))
+  [ "$status" -eq 124 ]
+  # Killed at ~1s, never allowed to run the full 30s sleep.
+  [ "$elapsed" -lt 10 ]
+}
+
+# --- (c) ECHO-only -> ECHO (exit 125) -----------------------------------------
+@test "(c) an echo-only run (output ~= prompt, no marker) returns ECHO (125)" {
+  stub_echo
+  # The output must actually repeat the prompt, irrespective of its length.
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_PROMPT_ARG="review this large change and reply with a verdict; do not wander the filesystem" \
+      CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 125 ]
+}
+
+@test "(c2) an arg prompt beginning with hyphens is protected by an option terminator" {
+  stub_option_parser
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_PROMPT_ARG="--- canonical skill bytes" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"accepted prompt"* ]]
+}
+
+@test "(c3) a substantial prompt echo with reflow and wrapper text is rejected despite markers" {
+  stub_capture
+  printf 'Inspect the input handling and preserve the existing return value then verify invalid inputs produce the documented error before reporting results.' > "$TMP/prompt"
+  cat > "$TMP/response" <<'TEXT'
+Here is the requested text:
+Inspect the input handling and preserve the existing return value
+then verify invalid inputs produce the documented error
+tokens used: 123
+RUN-OK
+TEXT
+  run bash -c '
+    . "'"$LIB"'"
+    REVIEWER_MARKER=RUN-OK CODEX_EXEC_PROMPT_FILE="'"$TMP"'/prompt" \
+    CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 125 ]
+  [[ "$output" == *"ECHO"* ]]
+}
+
+@test "(c4) JSON agent-message echoes are decoded and completion events cannot certify them" {
+  stub_capture
+  printf 'Inspect "café" inputs.\nPreserve the return value.\nVerify errors before reporting results.' > "$TMP/prompt"
+  cat > "$TMP/response" <<'JSON'
+{"type":"item.completed","item":{"type":"agent_message","text":"Inspect \"caf\u00e9\" inputs.\nPreserve the return value.\nVerify errors before reporting results."}}
+{"type":"turn.completed","usage":{"input_tokens":20,"output_tokens":20}}
+JSON
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_EXTRA_ARGS=(--json)
+    REVIEWER_MARKER=turn.completed CODEX_EXEC_PROMPT_FILE="'"$TMP"'/prompt" \
+    CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 125 ]
+}
+
+@test "(c5) short exact echoes match whole words, not substrings in unrelated output" {
+  printf 'x' > "$TMP/prompt"
+  printf 'The next example passed.' > "$TMP/response"
+  run bash -c '. "'"$LIB"'"; codex_exec_looks_echoed "'"$TMP"'/response" "'"$TMP"'/prompt"'
+  [ "$status" -eq 1 ]
+  printf 'x\ntokens used: 1\n' > "$TMP/response"
+  run bash -c '. "'"$LIB"'"; codex_exec_looks_echoed "'"$TMP"'/response" "'"$TMP"'/prompt"'
+  [ "$status" -eq 0 ]
+}
+
+@test "(c6) marker strings cannot veto the separate sentinel and partial-packet guard" {
+  cat > "$TMP/prompt" <<'TEXT'
+First distinctive packet line about input handling.
+Second distinctive packet line about return values.
+Third distinctive packet line about deadline behavior.
+Fourth distinctive packet line about error propagation.
+Fifth distinctive packet line about cleanup guarantees.
+TEXT
+  { head -n 3 "$TMP/prompt"; printf 'tokens used: 1\nVERDICT: CONFIRMED\n'; } > "$TMP/response"
+  run bash -c '. "'"$LIB"'"; reviewer_packet_echoed "'"$TMP"'/response" "'"$TMP"'/prompt" synthetic-nonce'
+  [ "$status" -eq 0 ]
+  printf 'synthetic-nonce\nVERDICT: CONFIRMED\n' > "$TMP/response"
+  run bash -c '. "'"$LIB"'"; reviewer_packet_echoed "'"$TMP"'/response" "'"$TMP"'/prompt" synthetic-nonce'
+  [ "$status" -eq 0 ]
+}
+
+@test "(c7) one quoted occurrence cannot cover repeated prompt content" {
+  printf 'Review one tiny issue carefully. %.0s' {1..8} > "$TMP/prompt"
+  cat > "$TMP/response" <<'JSON'
+{"type":"item.completed","item":{"type":"agent_message","text":"Review one tiny issue carefully. That instruction has been checked and the behavior matches the requested result. The output is otherwise unrelated to the repeated source text and does not reproduce its remaining content."}}
+JSON
+  run bash -c '. "'"$LIB"'"; codex_exec_looks_echoed "'"$TMP"'/response" "'"$TMP"'/prompt"'
+  [ "$status" -eq 1 ]
+}
+
+@test "(c8) JSON events cannot conceal echoed plain or malformed output" {
+  printf 'Inspect the input handling and preserve the existing return value then verify invalid inputs produce the documented error before reporting results.' > "$TMP/prompt"
+  for prefix in '' '{ malformed: '; do
+    {
+      printf '{"type":"turn.started"}\n%s' "$prefix"
+      cat "$TMP/prompt"
+      printf '\n{"type":"turn.completed"}\n'
+    } > "$TMP/response"
+    run bash -c '. "'"$LIB"'"; codex_exec_looks_echoed "'"$TMP"'/response" "'"$TMP"'/prompt"'
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "(c9) prompt echoes split across plain and JSON agent text are rejected" {
+  stub_capture
+  printf 'Inspect the input handling and preserve the existing return value then verify invalid inputs produce the documented error before reporting results.' > "$TMP/prompt"
+  for first in plain json; do
+    /usr/bin/perl -MJSON::PP -e '
+      my $first = "Inspect the input handling and preserve the existing return value";
+      my $last = "then verify invalid inputs produce the documented error before reporting results.";
+      sub message { encode_json({type => "item.completed", item => {type => "agent_message", text => $_[0]}}) }
+      print(($ARGV[0] eq "plain" ? $first : message($first)), "\n");
+      print(($ARGV[0] eq "plain" ? message($last) : $last), "\n");
+      print "{\"type\":\"turn.completed\"}\n";
+    ' "$first" > "$TMP/response"
+    run bash -c '
+      . "'"$LIB"'"
+      CODEX_EXEC_OUT_FILE="'"$TMP"'/captured.jsonl" \
+      CODEX_EXEC_PROMPT_FILE="'"$TMP"'/prompt" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+    '
+    [ "$status" -eq 125 ]
+    cmp "$TMP/response" "$TMP/captured.jsonl"
+  done
+}
+
+@test "(c10) an exact structured prompt echo is rejected before event decoding" {
+  stub_capture
+  printf '%s' '{"type":"item.completed","item":{"type":"agent_message","text":"Inspect the return value and verify invalid input."}}' > "$TMP/prompt"
+  for footer in '' '{"type":"turn.completed"}' 'tokens used: 1'; do
+    { cat "$TMP/prompt"; printf '\n%s\n' "$footer"; } > "$TMP/response"
+    run bash -c '
+      . "'"$LIB"'"
+      CODEX_EXEC_PROMPT_FILE="'"$TMP"'/prompt" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+    '
+    [ "$status" -eq 125 ]
+  done
+}
+
+@test "(c11) wrapped multiline structured prompt blocks are rejected before decoding" {
+  stub_capture
+  first='{"type":"turn.started"}'
+  last='{"type":"item.completed","item":{"type":"agent_message","text":"Inspect the return value and verify invalid input."}}'
+  printf '%s\n%s' "$first" "$last" > "$TMP/prompt"
+  for wrapper in completion plain normalized; do
+    case "$wrapper" in
+      completion) { cat "$TMP/prompt"; printf '\n{"type":"turn.completed"}\n'; } ;;
+      plain) { printf 'Here is the requested content:\n'; cat "$TMP/prompt"; printf '\nEnd of content.\n'; } ;;
+      normalized) printf 'Here is the requested content:\n\t%s \t\n \t%s\t \nEnd of content.\n' "$first" "$last" ;;
+    esac > "$TMP/response"
+    run bash -c '
+      . "'"$LIB"'"
+      CODEX_EXEC_EXTRA_ARGS=(--json)
+      CODEX_EXEC_OUT_FILE="'"$TMP"'/captured.jsonl" \
+      CODEX_EXEC_PROMPT_FILE="'"$TMP"'/prompt" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+    '
+    [ "$status" -eq 125 ]
+    cmp "$TMP/response" "$TMP/captured.jsonl"
+  done
+  [ "$(wc -l < "$TMP/invocations" | tr -d ' ')" -eq 3 ]
+}
+
+@test "(c12) whitespace-only lines cannot hide a wrapped structured prompt reflection" {
+  stub_capture
+  first='{"type":"turn.started"}'
+  last='{"type":"item.completed","item":{"type":"agent_message","text":"Inspect the return value and verify invalid input."}}'
+  for variation in blank whitespace removed changed; do
+    printf '%s\n%s' "$first" "$last" > "$TMP/prompt"
+    case "$variation" in
+      blank) separator=$'\n' ;;
+      whitespace) separator=$' \t \n' ;;
+      removed) printf '%s\n \t \n%s' "$first" "$last" > "$TMP/prompt"; separator='' ;;
+      changed) printf '%s\n\n%s' "$first" "$last" > "$TMP/prompt"; separator=$' \t \n' ;;
+    esac
+    printf 'Here is the requested content:\n%s\n%s%s\nEnd of content.\n' "$first" "$separator" "$last" > "$TMP/response"
+    run bash -c '
+      . "'"$LIB"'"
+      CODEX_EXEC_OUT_FILE="'"$TMP"'/captured.jsonl" CODEX_EXEC_STDERR_FILE="'"$TMP"'/stderr" \
+      CODEX_EXEC_PROMPT_FILE="'"$TMP"'/prompt" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+    '
+    [ "$status" -eq 125 ]
+    cmp "$TMP/response" "$TMP/captured.jsonl"
+    [ ! -s "$TMP/stderr" ]
+  done
+  [ "$(wc -l < "$TMP/invocations" | tr -d ' ')" -eq 4 ]
+}
+
+@test "(c13) structured block matching preserves meaningful line order and content" {
+  stub_capture
+  first='{"type":"turn.started"}'
+  last='{"type":"item.completed","item":{"type":"agent_message","text":"Inspect the return value and verify invalid input."}}'
+  printf '%s\n \t \n%s' "$first" "$last" > "$TMP/prompt"
+  for variation in first-only last-only reversed; do
+    {
+      printf 'The synthetic result follows:\n'
+      case "$variation" in
+        first-only) printf '%s\n' "$first" ;;
+        last-only) printf '%s\n' "$last" ;;
+        reversed) printf '%s\n\n%s\n' "$last" "$first" ;;
+      esac
+      printf 'The remaining requested content is absent.\n'
+    } > "$TMP/response"
+    run bash -c '
+      . "'"$LIB"'"
+      CODEX_EXEC_OUT_FILE="'"$TMP"'/captured.jsonl" \
+      CODEX_EXEC_PROMPT_FILE="'"$TMP"'/prompt" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+    '
+    [ "$status" -eq 0 ]
+    cmp "$TMP/response" "$TMP/captured.jsonl"
+  done
+  [ "$(wc -l < "$TMP/invocations" | tr -d ' ')" -eq 3 ]
+}
+
+@test "(c14) whitespace-normalized structured prompt blocks inside tool output stay excluded" {
+  stub_capture
+  printf '%s\n \t \n%s\n' \
+    '{"type":"turn.started"}' \
+    '{"type":"item.completed","item":{"type":"agent_message","text":"Inspect the return value and verify invalid input."}}' > "$TMP/prompt"
+  for marker in '' 'tokens used: 1'; do
+    /usr/bin/perl -MJSON::PP -e '
+      local $/; open my $p, "<", $ARGV[0] or die $!; my $prompt = <$p>;
+      print encode_json({type => "item.completed", item => {type => "command_execution", aggregated_output => "Here is the requested content:\n" . $prompt . "End of content.\n" . $ARGV[1], exit_code => 0}}), "\n";
+      print encode_json({type => "item.completed", item => {type => "agent_message", text => "The synthetic assertions completed with their expected results."}}), "\n";
+      print encode_json({type => "turn.completed"}), "\n";
+    ' "$TMP/prompt" "$marker" > "$TMP/response"
+    run bash -c '
+      . "'"$LIB"'"
+      CODEX_EXEC_EXTRA_ARGS=(--json)
+      CODEX_EXEC_OUT_FILE="'"$TMP"'/captured.jsonl" \
+      CODEX_EXEC_PROMPT_FILE="'"$TMP"'/prompt" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+    '
+    [ "$status" -eq 0 ]
+    cmp "$TMP/response" "$TMP/captured.jsonl"
+  done
+  [ "$(wc -l < "$TMP/invocations" | tr -d ' ')" -eq 2 ]
+}
+
+# --- (d) MISSING codex -> MISSING (exit 2) ------------------------------------
+@test "(d) a missing codex binary returns MISSING (2), a precondition not a result" {
+  # No stub installed AND point CODEX_EXEC_BIN at a name that does not exist.
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_BIN="codex-does-not-exist-xyz" CODEX_EXEC_PROMPT_ARG="x" codex_exec_guarded
+  '
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"MISSING DEPENDENCY"* ]]
+}
+
+# --- (e) flat 0-byte output is reported after exactly one call ----------------
+@test "(e) a flat 0-byte run is not retried" {
+  stub_flat_then_success
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_PROMPT_ARG="do the thing" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 124 ]
+  [ "$(cat "$TMP/flat-count")" -eq 1 ]
+}
+
+# --- fire-and-score caller: empty output on a clean exit is SUCCESS, not STALL -
+@test "(f) EXPECT_OUTPUT=0: a clean exit-0 with empty output is SUCCESS, not a stall" {
+  # A stub that does real work but prints nothing (like a producer writing to disk).
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+exit 0
+FAKE
+  chmod +x "$TMP/bin/codex"
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_EXPECT_OUTPUT=0 CODEX_EXEC_PROMPT_ARG="build it" CODEX_EXEC_TIMEOUT=10 \
+      codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+}
+
+# --- genuine non-zero exit is preserved verbatim (not remapped) ----------------
+@test "(g) a genuine codex non-zero exit is returned verbatim (e.g. 1), distinct from a stall" {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+echo "codex refused to run: not a trusted directory" >&2
+exit 1
+FAKE
+  chmod +x "$TMP/bin/codex"
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_EXPECT_OUTPUT=0 CODEX_EXEC_PROMPT_ARG="x" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  # codex's own rc (1) is preserved — NOT collapsed to a fixed constant and NOT
+  # mistaken for a stall (124).
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"runtime evidence, not a review verdict"* ]]
+  [[ "$output" != *"genuine reviewer failure"* ]]
+}
+
+@test "(g2) native nonzero status wins over JSON, empty output, and echo classification" {
+  stub_capture
+  for shape in json empty echo; do
+    case "$shape" in
+      json) synthetic_json_capture ;;
+      empty) : > "$TMP/response" ;;
+      echo) printf 'Inspect the input handling and verify the result.' > "$TMP/response" ;;
+    esac
+    run env STUB_EXIT=7 bash -c '
+      . "'"$LIB"'"
+      CODEX_EXEC_OUT_FILE="'"$TMP"'/captured" \
+      CODEX_EXEC_PROMPT_ARG="Inspect the input handling and verify the result." \
+      CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+    '
+    [ "$status" -eq 7 ]
+    cmp "$TMP/response" "$TMP/captured"
+    [[ "$output" == *"runtime evidence, not a review verdict"* ]]
+  done
+  [ "$(wc -l < "$TMP/invocations" | tr -d ' ')" -eq 3 ]
+}
+
+# --- the distinct exit-code constants are defined and unique -------------------
+@test "(h) the documented exit-code constants are defined and mutually distinct" {
+  run bash -c '
+    . "'"$LIB"'"
+    echo "$CODEX_EXEC_OK $CODEX_EXEC_MISSING $CODEX_EXEC_STALL_TIMEOUT $CODEX_EXEC_ECHO"
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = "0 2 124 125" ]
+}
+
+# --- the producer/membrane templates are byte-stable --------------------------
+@test "(i) codex_exec_producer_template emits the historical byte-identical defaults" {
+  run bash -c '. "'"$LIB"'"; codex_exec_producer_template producer'
+  [ "$status" -eq 0 ]
+  # shellcheck disable=SC2016 # Assert literal parameters in the emitted template.
+  [ "$output" = 'timeout "$3" codex exec --skip-git-repo-check -C "$1" -s workspace-write "$2" >/dev/null 2>&1' ]
+  run bash -c '. "'"$LIB"'"; codex_exec_producer_template membrane'
+  [ "$status" -eq 0 ]
+  # shellcheck disable=SC2016 # Assert literal parameters in the emitted template.
+  [ "$output" = 'codex exec --skip-git-repo-check "$1" 2>/dev/null' ]
+}
+
+# --- CODEX_EXEC_WRAP: an external (filesystem-sealing) prefix around codex ----
+# The probe harness seals reps with an OUTER macOS `sandbox-exec` profile. Codex's
+# own seatbelt cannot nest inside it (sandbox_apply: Operation not permitted), so
+# a wrapped rep must run codex with --dangerously-bypass-approvals-and-sandbox (the
+# flag codex documents for exactly "externally sandboxed" use) instead of
+# --sandbox <value>. Wrapping via CODEX_EXEC_BIN is NOT acceptable: it flips the
+# metadata tool's coverage_eligible to false. Hence a dedicated prefix array.
+
+# A stub codex that records its argv one-per-line to $TMP/codex-argv, then
+# succeeds with the genuine-run marker.
+stub_argv_recorder() {
+  cat > "$TMP/bin/codex" <<FAKE
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$TMP/codex-argv"
+echo "the answer is 42"
+echo "tokens used: 1234"
+exit 0
+FAKE
+  chmod +x "$TMP/bin/codex"
+}
+
+# A stub wrapper (stands in for `sandbox-exec -p <profile>`): records its own argv
+# to $TMP/wrapper-argv, drops its one flag, then execs the rest (the codex argv).
+stub_wrapper() {
+  cat > "$TMP/bin/stub-wrapper" <<FAKE
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$TMP/wrapper-argv"
+[ "\$1" = "--flag" ] || { echo 'wrapper: expected --flag first' >&2; exit 97; }
+shift
+exec "\$@"
+FAKE
+  chmod +x "$TMP/bin/stub-wrapper"
+}
+
+# A stub `timeout` (shadows the real one on PATH) that records its argv to
+# $TMP/timeout-argv, drops the budget, then execs the rest — so the test can
+# assert the exact prefix ORDER: timeout, then wrapper, then codex.
+stub_timeout() {
+  cat > "$TMP/bin/timeout" <<FAKE
+#!/usr/bin/env bash
+# --foreground is probed functionally by the library, so the stub has to accept
+# it the way GNU timeout does: `timeout --foreground 1 true` must exit 0.
+if [ "\$1" = "--foreground" ]; then shift; fi
+printf '%s\n' "\$@" > "$TMP/timeout-argv"
+shift
+exec "\$@"
+FAKE
+  chmod +x "$TMP/bin/timeout"
+}
+
+@test "(wrap-a) CODEX_EXEC_WRAP unset: codex argv is byte-identical to the unwrapped shape" {
+  stub_argv_recorder
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_EXTRA_ARGS=(--json --ephemeral)
+    CODEX_EXEC_SKIP_GIT_CHECK=1 CODEX_EXEC_SANDBOX=workspace-write \
+    CODEX_EXEC_MODEL=gpt-test CODEX_EXEC_DIR=/tmp/work \
+    CODEX_EXEC_PROMPT_ARG="do the thing" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+  expected="$(printf '%s\n' exec --skip-git-repo-check --sandbox workspace-write -m gpt-test -C /tmp/work --json --ephemeral -- "do the thing")"
+  [ "$(cat "$TMP/codex-argv")" = "$expected" ]
+  [ ! -e "$TMP/wrapper-argv" ]
+}
+
+@test "(wrap-b) CODEX_EXEC_WRAP set: wrapper runs first with its flag, then codex with --dangerously-bypass-approvals-and-sandbox and NO --sandbox" {
+  stub_argv_recorder
+  stub_wrapper
+  stub_timeout
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_WRAP=("'"$TMP"'/bin/stub-wrapper" --flag)
+    CODEX_EXEC_EXTRA_ARGS=(--json --ephemeral)
+    CODEX_EXEC_SKIP_GIT_CHECK=1 CODEX_EXEC_SANDBOX=workspace-write \
+    CODEX_EXEC_MODEL=gpt-test CODEX_EXEC_DIR=/tmp/work \
+    CODEX_EXEC_PROMPT_ARG="do the thing" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the answer is 42"* ]]
+  # The wrapper is OUTERMOST and was exec'd with its flag first; the timeout
+  # wrapper sits inside it, so the sandbox is the outermost process.
+  [ -s "$TMP/wrapper-argv" ]
+  [ "$(sed -n 1p "$TMP/wrapper-argv")" = "--flag" ]
+  [ "$(sed -n 2p "$TMP/wrapper-argv")" = "$TMP/bin/timeout" ]
+  [ "$(sed -n 3p "$TMP/wrapper-argv")" = "--foreground" ]
+  [ "$(sed -n 4p "$TMP/wrapper-argv")" = "10" ]
+  [ "$(sed -n 5p "$TMP/wrapper-argv")" = "codex" ]
+  [ "$(sed -n 6p "$TMP/wrapper-argv")" = "exec" ]
+  # codex saw the bypass flag in place of --sandbox <value>; everything else intact.
+  expected="$(printf '%s\n' exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox -m gpt-test -C /tmp/work --json --ephemeral -- "do the thing")"
+  [ "$(cat "$TMP/codex-argv")" = "$expected" ]
+  ! grep -qx -- '--sandbox' "$TMP/codex-argv"
+  ! grep -qx -- 'workspace-write' "$TMP/codex-argv"
+  grep -qx -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/codex-argv"
+}
+
+@test "(wrap-c) the seal is outermost: order is wrapper, timeout --foreground, codex" {
+  # GNU timeout calls setpgid(0,0), so with timeout OUTSIDE the wrapper the
+  # reviewer and every child landed in timeout's process group and a caller
+  # reaping "the rep's group" signalled a group the rep was never in. The
+  # wrapper also has to be outermost for the timeout binary itself to run
+  # INSIDE the sandbox rather than being resolved from PATH outside it.
+  stub_argv_recorder
+  stub_wrapper
+  stub_timeout
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_WRAP=("'"$TMP"'/bin/stub-wrapper" --flag)
+    CODEX_EXEC_PROMPT_ARG="do the thing" CODEX_EXEC_TIMEOUT=7 codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+  [ -s "$TMP/wrapper-argv" ]
+  [ "$(sed -n 1p "$TMP/wrapper-argv")" = "--flag" ]
+  [ "$(sed -n 2p "$TMP/wrapper-argv")" = "$TMP/bin/timeout" ]
+  [ "$(sed -n 3p "$TMP/wrapper-argv")" = "--foreground" ]
+  [ "$(sed -n 4p "$TMP/wrapper-argv")" = "7" ]
+  [ "$(sed -n 5p "$TMP/wrapper-argv")" = "codex" ]
+  [ -s "$TMP/timeout-argv" ]
+  [ "$(sed -n 1p "$TMP/timeout-argv")" = "7" ]
+  [ "$(sed -n 2p "$TMP/timeout-argv")" = "codex" ]
+  [ "$(sed -n 3p "$TMP/timeout-argv")" = "exec" ]
+  [ -s "$TMP/codex-argv" ]
+}
+
+@test "(wrap-e) a timeout that refuses --foreground fails closed as MISSING" {
+  # Running without the flag would silently put the reviewer back in timeout's
+  # process group, which is the defect this whole ordering exists to close.
+  stub_argv_recorder
+  cat > "$TMP/bin/timeout" <<'FAKE'
+#!/usr/bin/env bash
+if [ "$1" = "--foreground" ]; then
+  printf 'timeout: unrecognized option --foreground\n' >&2
+  exit 125
+fi
+shift
+exec "$@"
+FAKE
+  chmod +x "$TMP/bin/timeout"
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_PROMPT_ARG="do the thing" CODEX_EXEC_TIMEOUT=7 codex_exec_guarded
+  '
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"MISSING-TIMEOUT"* ]]
+  [ ! -e "$TMP/codex-argv" ]
+}
+
+@test "(wrap-d) a wrapped run preserves the exit-code contract (genuine non-zero verbatim, stall 124)" {
+  stub_wrapper
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+echo "codex refused to run" >&2
+exit 5
+FAKE
+  chmod +x "$TMP/bin/codex"
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_WRAP=("'"$TMP"'/bin/stub-wrapper" --flag)
+    CODEX_EXEC_EXPECT_OUTPUT=0 CODEX_EXEC_PROMPT_ARG="x" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 5 ]
+  [ "$HAVE_TIMEOUT" -eq 1 ] || skip "no timeout/gtimeout on PATH"
+  stub_hang
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_WRAP=("'"$TMP"'/bin/stub-wrapper" --flag)
+    CODEX_EXEC_PROMPT_ARG="x" CODEX_EXEC_TIMEOUT=1 codex_exec_guarded
+  '
+  [ "$status" -eq 124 ]
+}
+
+@test "(wrap-e) CODEX_EXEC_WRAP is codex-only: the agy adapter ignores it and keeps --sandbox" {
+  stub_wrapper
+  cat > "$TMP/bin/agy" <<FAKE
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$TMP/agy-argv"
+echo "VERDICT: CONFIRMED"
+FAKE
+  chmod +x "$TMP/bin/agy"
+  run bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_WRAP=("'"$TMP"'/bin/stub-wrapper" --flag)
+    REVIEWER=agy CODEX_EXEC_PROMPT_ARG="review this" CODEX_EXEC_TIMEOUT=10 codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+  [ ! -e "$TMP/wrapper-argv" ]
+  grep -qx -- '--sandbox' "$TMP/agy-argv"
+  ! grep -qx -- '--dangerously-bypass-approvals-and-sandbox' "$TMP/agy-argv"
+}
+
+@test "bounds: explicit four-argument control calls preserve their timeout" {
+  run bash -c '. "'"$LIB"'"; _codex_exec_control limits 1800 1024 "" ""'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "1800 1024 "* ]]
+}
+
+@test "bounds: missing timeout and deadline prevent any launch" {
+  stub_argv_recorder
+  stub_timeout
+  run bash -c '. "'"$LIB"'"; unset CODEX_EXEC_TIMEOUT CODEX_EXEC_DEADLINE_EPOCH; CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"MISSING-LIMIT"* ]]
+  [ ! -e "$TMP/codex-argv" ]
+  [ ! -e "$TMP/timeout-argv" ]
+}
+
+@test "bounds: caller timeout above ten minutes reaches the wrapper unchanged" {
+  stub_argv_recorder
+  stub_timeout
+  run bash -c '. "'"$LIB"'"; unset CODEX_EXEC_DEADLINE_EPOCH; CODEX_EXEC_TIMEOUT=1800 CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+  [ "$status" -eq 0 ]
+  [ "$(sed -n 1p "$TMP/timeout-argv")" = "1800" ]
+}
+
+@test "bounds: deadline alone supplies its remaining time beyond ten minutes" {
+  stub_argv_recorder
+  stub_timeout
+  run bash -c '
+    . "'"$LIB"'"
+    unset CODEX_EXEC_TIMEOUT
+    export CODEX_EXEC_DEADLINE_EPOCH="$(/usr/bin/perl -MTime::HiRes=time -e "print time + 1800")"
+    CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+  /usr/bin/perl -e 'exit !($ARGV[0] > 1790 && $ARGV[0] <= 1800)' "$(sed -n 1p "$TMP/timeout-argv")"
+}
+
+@test "bounds: the earlier of caller timeout and deadline governs the invocation" {
+  stub_argv_recorder
+  stub_timeout
+  run bash -c '
+    . "'"$LIB"'"
+    export CODEX_EXEC_DEADLINE_EPOCH="$(/usr/bin/perl -MTime::HiRes=time -e "print time + 1800")"
+    CODEX_EXEC_TIMEOUT=900 CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+  [ "$(sed -n 1p "$TMP/timeout-argv")" = "900" ]
+  run bash -c '
+    . "'"$LIB"'"
+    export CODEX_EXEC_DEADLINE_EPOCH="$(/usr/bin/perl -MTime::HiRes=time -e "print time + 900")"
+    CODEX_EXEC_TIMEOUT=1800 CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded
+  '
+  [ "$status" -eq 0 ]
+  /usr/bin/perl -e 'exit !($ARGV[0] > 890 && $ARGV[0] <= 900)' "$(sed -n 1p "$TMP/timeout-argv")"
+}
+
+@test "timeout argv helper: missing or invalid bounds fail before capability probe" {
+  stub_timeout
+  run bash -c '. "'"$LIB"'"; unset CODEX_EXEC_TIMEOUT CODEX_EXEC_DEADLINE_EPOCH; codex_exec_timeout_cmd'
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"MISSING-LIMIT"* ]]
+  [ ! -e "$TMP/timeout-argv" ]
+  for invalid in '' 0 -1 NaN inf bad; do
+    run env CODEX_EXEC_TIMEOUT=900 bash -c '. "'"$LIB"'"; codex_exec_timeout_cmd "$1"' _ "$invalid"
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"INVALID-LIMIT"* ]]
+    [ ! -e "$TMP/timeout-argv" ]
+  done
+}
+
+@test "timeout argv helper: positional and inherited budgets have no ten-minute cap" {
+  stub_timeout
+  for mode in positional inherited deadline; do
+    run bash -c '
+      . "'"$LIB"'"
+      unset CODEX_EXEC_TIMEOUT CODEX_EXEC_DEADLINE_EPOCH
+      case "$1" in
+        positional) CODEX_EXEC_TIMEOUT=2000 codex_exec_timeout_cmd 1800 ;;
+        inherited) CODEX_EXEC_TIMEOUT=1800 codex_exec_timeout_cmd ;;
+        deadline) CODEX_EXEC_DEADLINE_EPOCH="$(/usr/bin/perl -MTime::HiRes=time -e "print time + 1800")" codex_exec_timeout_cmd ;;
+      esac
+    ' _ "$mode"
+    [ "$status" -eq 0 ]
+    [[ "$output" == "$TMP/bin/timeout --foreground "* ]]
+    /usr/bin/perl -e 'exit !($ARGV[0] > 1790 && $ARGV[0] <= 1800)' "${output##* }"
+  done
+}
+
+@test "timeout argv helper: preparation consumes the earlier deadline" {
+  stub_timeout
+  run bash -c '
+    . "'"$LIB"'"
+    codex_exec_timeout_bin() { sleep .2; printf "%s" "'"$TMP"'/bin/timeout"; }
+    CODEX_EXEC_TIMEOUT=1800 CODEX_EXEC_DEADLINE_EPOCH="$(/usr/bin/perl -MTime::HiRes=time -e "print time + 900")" codex_exec_timeout_cmd
+  '
+  [ "$status" -eq 0 ]
+  /usr/bin/perl -e 'exit !($ARGV[0] > 890 && $ARGV[0] < 899.9)' "${output##* }"
+}
+
+@test "bounds: invalid timeout and capture limits prevent reviewer launch" {
+  stub_argv_recorder
+  for setting in CODEX_EXEC_TIMEOUT CODEX_EXEC_MAX_OUTPUT_BYTES; do
+    for invalid in '' 0 -1 NaN inf 1e999 bad; do
+      run env CODEX_EXEC_TIMEOUT=10 CODEX_EXEC_DEADLINE_EPOCH=4102444800 "$setting=$invalid" bash -c '. "'"$LIB"'"; CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+      [ "$status" -eq 2 ]
+      [[ "$output" == *"INVALID-LIMIT"* ]]
+      [ ! -e "$TMP/codex-argv" ]
+    done
+  done
+}
+
+@test "bounds: invalid and expired inherited deadlines prevent launch" {
+  stub_argv_recorder
+  for deadline in '' 0 -1 NaN later; do
+    run env "CODEX_EXEC_DEADLINE_EPOCH=$deadline" bash -c '. "'"$LIB"'"; CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+    [ "$status" -eq 2 ]
+    [ ! -e "$TMP/codex-argv" ]
+  done
+  run env CODEX_EXEC_DEADLINE_EPOCH=1 bash -c '. "'"$LIB"'"; CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+  [ "$status" -eq 124 ]
+  [ ! -e "$TMP/codex-argv" ]
+}
+
+@test "bounds: missing timeout enforcement fails closed" {
+  stub_argv_recorder
+  run bash -c '. "'"$LIB"'"; CODEX_EXEC_TIMEOUT=10 CODEX_EXEC_TIMEOUT_BIN=/nonexistent/timeout CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"MISSING-TIMEOUT"* ]]
+  [ ! -e "$TMP/codex-argv" ]
+}
+
+@test "bounds: preparation expiry prevents launch without renewing the caller deadline" {
+  stub_argv_recorder
+  run timeout --kill-after=1 5 bash -c '
+    . "'"$LIB"'"
+    # Preparation consumes the same deadline as the eventual reviewer.
+    codex_exec_timeout_bin() { sleep .4; printf "%s" "'"$REAL_TIMEOUT"'"; }
+    CODEX_EXEC_TIMEOUT=.3 CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded
+  '
+  [ "$status" -eq 124 ]
+  [[ "$output" == *"deadline expired before launch"* ]]
+  [ ! -e "$TMP/codex-argv" ]
+}
+
+@test "bounds: TERM resistant reviewer and child are killed with partial evidence" {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+trap '' TERM
+echo $$ > "$TMPDIR/reviewer-pid"
+bash -c 'trap "" TERM; echo $$ > "$TMPDIR/child-pid"; exec sleep 30' &
+while [ ! -s "$TMPDIR/child-pid" ]; do sleep .01; done
+printf 'partial result\n'
+wait
+FAKE
+  chmod +x "$TMP/bin/codex"
+  start=$SECONDS
+  # This fixture must reach the running-reviewer branch. A .3s budget can be
+  # consumed by capability probing alone; the preceding case proves that path.
+  run timeout --kill-after=1 5 bash -c '. "'"$LIB"'"; CODEX_EXEC_TIMEOUT=2 CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+  [ "$status" -eq 124 ]
+  [ $((SECONDS - start)) -lt 4 ]
+  [ -s "$TMP/reviewer-pid" ]
+  [ -s "$TMP/child-pid" ]
+  assert_stopped "$(cat "$TMP/reviewer-pid")"
+  assert_stopped "$(cat "$TMP/child-pid")"
+  [[ "$output" == *"partial result"* ]]
+  [[ "$output" == *"deadline expired; owned process group stopped"* ]]
+}
+
+@test "bounds: clean parent exit with children is degraded even when cleanup succeeds" {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+bash -c 'trap "" TERM; echo $$ > "$TMPDIR/child-pid"; exec sleep 30' &
+while [ ! -s "$TMPDIR/child-pid" ]; do sleep .01; done
+printf 'tokens used: 1\n'
+exit 0
+FAKE
+  chmod +x "$TMP/bin/codex"
+  start=$SECONDS
+  run timeout --kill-after=1 5 bash -c '. "'"$LIB"'"; CODEX_EXEC_TIMEOUT=3 CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+  [ "$status" -eq 122 ]
+  [ $((SECONDS - start)) -lt 3 ]
+  assert_stopped "$(cat "$TMP/child-pid")"
+  [[ "$output" == *"rep-survivor"* ]]
+  [[ "$output" == *"tokens used: 1"* ]]
+  [[ "$output" != *"genuine reviewer failure"* ]]
+}
+
+@test "bounds: silent producer descendants are degraded without inherited capture pipes" {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+sleep 30 </dev/null >/dev/null 2>&1 &
+echo $! > "$TMPDIR/child-pid"
+exit 0
+FAKE
+  chmod +x "$TMP/bin/codex"
+  run timeout --kill-after=1 5 bash -c '. "'"$LIB"'"; CODEX_EXEC_TIMEOUT=3 CODEX_EXEC_EXPECT_OUTPUT=0 CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+  [ "$status" -eq 122 ]
+  [[ "$output" == *"rep-survivor"* ]]
+  assert_stopped "$(cat "$TMP/child-pid")"
+}
+
+@test "bounds: continuous stdout and stderr share one exact capture cap" {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+trap '' TERM
+echo $$ > "$TMPDIR/reviewer-pid"
+while :; do printf 'stdout data\n'; printf 'stderr data\n' >&2; done
+FAKE
+  chmod +x "$TMP/bin/codex"
+  run timeout --kill-after=1 5 bash -c '
+    . "'"$LIB"'"
+    CODEX_EXEC_TIMEOUT=3 CODEX_EXEC_MAX_OUTPUT_BYTES=1024 \
+    CODEX_EXEC_OUT_FILE="'"$TMP"'/out" CODEX_EXEC_STDERR_FILE="'"$TMP"'/err" \
+    CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded
+  '
+  [ "$status" -eq 123 ]
+  [ $(( $(wc -c < "$TMP/out") + $(wc -c < "$TMP/err") )) -eq 1024 ]
+  [[ "$output" == *"OUTPUT-LIMIT"* ]]
+  assert_stopped "$(cat "$TMP/reviewer-pid")"
+}
+
+@test "bounds: repeated invocations cannot renew a shared deadline" {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+printf 'invoked\n' >> "$TMPDIR/invocations"
+# The first call succeeds immediately; the second must exhaust the shared
+# deadline. Avoid requiring two nearly-one-second calls to fit in 1.5 seconds
+# on a loaded CI worker. A third worker must never launch.
+if [ "$(wc -l < "$TMPDIR/invocations" | tr -d ' ')" -gt 1 ]; then sleep 30; fi
+printf 'tokens used: 1\n'
+FAKE
+  chmod +x "$TMP/bin/codex"
+  run timeout --kill-after=1 12 bash -c '
+    . "'"$LIB"'"
+    export CODEX_EXEC_DEADLINE_EPOCH="$(/usr/bin/perl -MTime::HiRes=time -e "print time + 5")"
+    unset CODEX_EXEC_TIMEOUT
+    export CODEX_EXEC_PROMPT_ARG=x
+    codex_exec_guarded || exit 91
+    codex_exec_guarded; second=$?
+    codex_exec_guarded; third=$?
+    [ "$second" -eq 124 ] && [ "$third" -eq 124 ]
+  '
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$TMP/invocations" | tr -d ' ')" -eq 2 ]
+}
+
+@test "bounds: cancellation of the sourced caller cleans workers and restores traps" {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+trap '' TERM
+echo $$ > "$TMPDIR/reviewer-pid"
+bash -c 'trap "" TERM; echo $$ > "$TMPDIR/child-pid"; exec sleep 30' &
+printf 'partial before cancellation\n'
+wait
+FAKE
+  chmod +x "$TMP/bin/codex"
+  cat > "$TMP/caller.sh" <<'CALLER'
+source "$1"
+trap 'echo original-term-handler' TERM
+original=$(trap -p TERM)
+CODEX_EXEC_TIMEOUT=10 CODEX_EXEC_OUT_FILE="$TMPDIR/evidence" CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded
+result=$?
+[ "$(trap -p TERM)" = "$original" ] || exit 92
+exit "$result"
+CALLER
+  run timeout --kill-after=1 5 bash -c '
+    bash "'"$TMP"'/caller.sh" "'"$LIB"'" & runner=$!
+    for attempt in {1..100}; do [ -s "'"$TMP"'/child-pid" ] && break; sleep .02; done
+    kill -TERM "$runner"
+    wait "$runner"
+  '
+  [ "$status" -eq 143 ]
+  grep -q 'partial before cancellation' "$TMP/evidence"
+  assert_stopped "$(cat "$TMP/reviewer-pid")"
+  assert_stopped "$(cat "$TMP/child-pid")"
+}
+
+@test "bounds: parent death also stops the owned worker group" {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+trap '' TERM
+echo $$ > "$TMPDIR/reviewer-pid"
+printf 'partial before parent death\n'
+exec sleep 30
+FAKE
+  chmod +x "$TMP/bin/codex"
+  run timeout --kill-after=1 5 bash -c '
+    bash -c '\''source "$1"; CODEX_EXEC_TIMEOUT=10 CODEX_EXEC_OUT_FILE="$TMPDIR/evidence" CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'\'' _ "'"$LIB"'" & runner=$!
+    for attempt in {1..100}; do [ -s "'"$TMP"'/reviewer-pid" ] && break; sleep .02; done
+    kill -KILL "$runner"
+    wait "$runner" || true
+    sleep .5
+  '
+  [ "$status" -eq 0 ]
+  assert_stopped "$(cat "$TMP/reviewer-pid")"
+  grep -q 'partial before parent death' "$TMP/evidence"
+}
+
+@test "bounds: missing default timeout and hanging capability probe prevent launch" {
+  stub_argv_recorder
+  mkdir "$TMP/no-timeout"
+  ln -s "$(command -v tr)" "$TMP/no-timeout/tr"
+  run env PATH="$TMP/no-timeout" CODEX_EXEC_BIN="$TMP/bin/codex" CODEX_EXEC_TIMEOUT=10 /bin/bash -c '. "'"$LIB"'"; CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"MISSING-TIMEOUT"* ]]
+  [ ! -e "$TMP/codex-argv" ]
+  cat > "$TMP/bin/timeout" <<'FAKE'
+#!/usr/bin/env bash
+trap '' TERM
+echo $$ > "$TMPDIR/probe-pid"
+exec sleep 30
+FAKE
+  chmod +x "$TMP/bin/timeout"
+  start=$SECONDS
+  run "$REAL_TIMEOUT" --kill-after=1 5 bash -c '. "'"$LIB"'"; CODEX_EXEC_TIMEOUT=10 CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+  [ "$status" -eq 2 ]
+  [ $((SECONDS - start)) -lt 4 ]
+  [ ! -e "$TMP/codex-argv" ]
+  assert_stopped "$(cat "$TMP/probe-pid")"
+}
+
+@test "bounds: file and stdin prompt bytes survive bounded capture" {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+cat > "$TMPDIR/received-prompt"
+printf 'tokens used: 1\n'
+FAKE
+  chmod +x "$TMP/bin/codex"
+  printf 'file prompt\n\n' > "$TMP/prompt"
+  run bash -c '. "'"$LIB"'"; CODEX_EXEC_TIMEOUT=10 CODEX_EXEC_PROMPT_FILE="'"$TMP"'/prompt" CODEX_EXEC_PROMPT_ARG=ignored codex_exec_guarded'
+  [ "$status" -eq 0 ]
+  cmp "$TMP/prompt" "$TMP/received-prompt"
+  run bash -c '. "'"$LIB"'"; printf "stdin prompt\n\n" | CODEX_EXEC_TIMEOUT=10 codex_exec_guarded'
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TMP/received-prompt")" = 'stdin prompt' ]
+}
+
+@test "bounds: cancelling the caller during a hanging capability probe prevents launch" {
+  stub_argv_recorder
+  cat > "$TMP/bin/timeout" <<'FAKE'
+#!/usr/bin/env bash
+trap '' TERM
+echo $$ > "$TMPDIR/probe-pid"
+exec sleep 30
+FAKE
+  chmod +x "$TMP/bin/timeout"
+  run "$REAL_TIMEOUT" --kill-after=1 5 bash -c '
+    bash -c '\''source "$1"; CODEX_EXEC_TIMEOUT=10 CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'\'' _ "'"$LIB"'" & runner=$!
+    for attempt in {1..100}; do [ -s "'"$TMP"'/probe-pid" ] && break; sleep .02; done
+    kill -TERM "$runner"
+    wait "$runner" || true
+    sleep .5
+  '
+  [ "$status" -eq 0 ]
+  [ ! -e "$TMP/codex-argv" ]
+  assert_stopped "$(cat "$TMP/probe-pid")"
+}
+
+@test "bounds: unopened prompt FIFO expires before reviewer launch" {
+  stub_argv_recorder
+  mkfifo "$TMP/prompt-pipe"
+  run timeout --kill-after=1 5 bash -c '. "'"$LIB"'"; CODEX_EXEC_TIMEOUT=.3 CODEX_EXEC_PROMPT_FILE="'"$TMP"'/prompt-pipe" codex_exec_guarded'
+  [ "$status" -eq 124 ]
+  [[ "$output" == *"partial input preserved at"* ]]
+  [ ! -e "$TMP/codex-argv" ]
+}
+
+@test "bounds: capture limits do not limit reviewer workspace file writes" {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+dd if=/dev/zero of="$TMPDIR/work-product" bs=4096 count=8 2>/dev/null
+printf 'tokens used: 1\n'
+FAKE
+  chmod +x "$TMP/bin/codex"
+  run bash -c '. "'"$LIB"'"; CODEX_EXEC_TIMEOUT=10 CODEX_EXEC_MAX_OUTPUT_BYTES=32 CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+  [ "$status" -eq 0 ]
+  [ "$(wc -c < "$TMP/work-product" | tr -d ' ')" -eq 32768 ]
+}
+
+@test "bounds: default capture limit is finite and retains exactly ten MiB" {
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+dd if=/dev/zero bs=1048576 count=11 2>/dev/null
+FAKE
+  chmod +x "$TMP/bin/codex"
+  run "$REAL_TIMEOUT" --kill-after=1 5 bash -c '. "'"$LIB"'"; CODEX_EXEC_TIMEOUT=10 CODEX_EXEC_OUT_FILE="'"$TMP"'/evidence" CODEX_EXEC_PROMPT_ARG=x codex_exec_guarded'
+  [ "$status" -eq 123 ]
+  [ "$(wc -c < "$TMP/evidence" | tr -d ' ')" -eq 10485760 ]
+}
+
+@test "skill discovery caller: absent bounds fail before reviewer launch" {
+  stub_argv_recorder
+  run bash "$BATS_TEST_DIRNAME/../../scripts/validate-codex-cli-skills.sh" --workdir "$TMP"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MISSING-LIMIT"* ]]
+  [ ! -e "$TMP/codex-argv" ]
+}
+
+@test "skill discovery caller: explicit timeout and deadline options reach the adapter" {
+  stub_timeout
+  cat > "$TMP/bin/codex" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"using-agentops,swarm,research"}}'
+printf 'tokens used: 1\n'
+FAKE
+  chmod +x "$TMP/bin/codex"
+  caller="$BATS_TEST_DIRNAME/../../scripts/validate-codex-cli-skills.sh"
+  run bash "$caller" --workdir "$TMP" --timeout 1800
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Required skills present"* ]]
+  [ "$(sed -n 1p "$TMP/timeout-argv")" = "1800" ]
+
+  deadline="$(/usr/bin/perl -MTime::HiRes=time -e 'print time + 1800')"
+  run bash "$caller" --workdir "$TMP" --deadline-epoch "$deadline"
+  [ "$status" -eq 0 ]
+  /usr/bin/perl -e 'exit !($ARGV[0] > 1790 && $ARGV[0] <= 1800)' "$(sed -n 1p "$TMP/timeout-argv")"
+
+  run bash "$caller" --workdir "$TMP" --timeout 900 --deadline-epoch "$deadline"
+  [ "$status" -eq 0 ]
+  [ "$(sed -n 1p "$TMP/timeout-argv")" = "900" ]
+}

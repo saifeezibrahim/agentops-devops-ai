@@ -1,0 +1,49 @@
+formula = "agentops-experiment"
+description = "Plan, implement, validate, then offer one validated candidate to the Refiner."
+
+[requires]
+formula_compiler = ">=2.0.0"
+
+[vars]
+[vars.work_dir]
+description = "Absolute isolated Git worktree prepared for this source bead"
+required = true
+[vars.plan_target]
+description = "Rig-qualified Sol planner"
+required = true
+[vars.implement_target]
+description = "Rig-qualified Terra-high or Opus-medium implementer"
+required = true
+[vars.validate_target]
+description = "Rig-qualified fresh Sol validator"
+required = true
+[vars.refiner_target]
+description = "Rig-qualified Fable Refiner"
+required = true
+
+[[steps]]
+id = "plan"
+title = "Plan {{convoy_id}}"
+description = "source_bead={{convoy_id}}\nrole=plan\nRefine acceptance and write scope in the source bead."
+metadata = { "gc.run_target" = "{{plan_target}}", "work_dir" = "{{work_dir}}" }
+
+[[steps]]
+id = "implement"
+title = "Implement {{convoy_id}}"
+description = "source_bead={{convoy_id}}\nrole=implement\nProduce one committed candidate in the isolated worktree."
+needs = ["plan"]
+metadata = { "gc.run_target" = "{{implement_target}}", "work_dir" = "{{work_dir}}" }
+
+[[steps]]
+id = "validate"
+title = "Validate {{convoy_id}}"
+description = "source_bead={{convoy_id}}\nrole=validate\nFreshly validate the exact committed candidate against the source bead."
+needs = ["implement"]
+metadata = { "gc.run_target" = "{{validate_target}}", "work_dir" = "{{work_dir}}" }
+
+[[steps]]
+id = "deliver"
+title = "Deliver {{convoy_id}}"
+description = "source_bead={{convoy_id}}\nrole=deliver\nRebase, check, open or adopt the PR, and apply configured merge policy."
+needs = ["validate"]
+metadata = { "gc.run_target" = "{{refiner_target}}", "work_dir" = "{{work_dir}}" }

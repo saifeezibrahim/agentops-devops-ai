@@ -1,0 +1,1064 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ao rpi · mission control</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #080b10;
+  --bg1:      #0d1117;
+  --bg2:      #111820;
+  --border:   #1e2d3d;
+  --dim:      #3a5068;
+  --text:     #c9d1d9;
+  --bright:   #e6edf3;
+  --green:    #3fb950;
+  --amber:    #f0883e;
+  --blue:     #58a6ff;
+  --red:      #f85149;
+  --purple:   #bc8cff;
+  --yellow:   #ffd700;
+  --cyan:     #56d364;
+  --font: 'Cascadia Code', 'Fira Code', 'Menlo', 'Consolas', monospace;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; overflow: hidden; }
+
+.grid {
+  display: grid;
+  grid-template-rows: 48px 2px 1fr 32px;
+  height: 100vh;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 20px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+}
+.header-logo { color: var(--blue); font-weight: 700; font-size: 14px; letter-spacing: 1px; }
+.header-sep { color: var(--dim); }
+.header-run { color: var(--purple); font-size: 12px; }
+.header-elapsed { color: var(--dim); font-size: 12px; margin-left: auto; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--dim); }
+.status-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.5s ease-in-out infinite; }
+.status-dot.done    { background: var(--blue); }
+.status-dot.failed  { background: var(--red); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+/* Main */
+.main {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  overflow: hidden;
+}
+
+/* Left panel */
+.panel-left {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.panel-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.panel-label {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 10px;
+}
+
+/* Phases */
+.phase-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 0;
+}
+.phase-icon { font-size: 14px; width: 16px; flex-shrink: 0; }
+.phase-info { flex: 1; min-width: 0; }
+.phase-name { color: var(--bright); font-size: 12px; }
+.phase-meta { color: var(--dim); font-size: 11px; margin-top: 2px; }
+.phase-row.running .phase-name { color: var(--green); font-weight: 600; }
+.phase-row.done    .phase-name { color: var(--blue); }
+.phase-row.failed  .phase-name { color: var(--red); }
+.phase-row.pending .phase-name { color: var(--dim); }
+
+/* Stats */
+.stat-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+.stat-label { color: var(--dim); }
+.stat-value { color: var(--bright); font-variant-numeric: tabular-nums; }
+.stat-value.cost   { color: var(--yellow); }
+.stat-value.active { color: var(--green); }
+
+/* Right panel - events */
+.panel-right {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.events-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg1);
+  flex-shrink: 0;
+}
+.events-label { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--dim); }
+.events-count { color: var(--dim); font-size: 11px; margin-left: auto; }
+.follow-btn {
+  font-family: var(--font);
+  font-size: 11px;
+  padding: 2px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--dim);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all .15s;
+}
+.follow-btn.active { border-color: var(--green); color: var(--green); }
+.follow-btn:hover { border-color: var(--text); color: var(--text); }
+
+.events-feed {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  scroll-behavior: smooth;
+}
+.events-feed::-webkit-scrollbar { width: 4px; }
+.events-feed::-webkit-scrollbar-track { background: transparent; }
+.events-feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.event-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 2px 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  border-left: 2px solid transparent;
+  transition: background .1s;
+}
+.event-row:hover { background: var(--bg2); }
+.event-row.new { animation: flash .4s ease-out; }
+.event-row.phase-1 { border-left-color: #1a3a5c; }
+.event-row.phase-2 { border-left-color: #1a4a2e; }
+.event-row.phase-3 { border-left-color: #3a2a5c; }
+@keyframes flash { from{background:rgba(88,166,255,.08)} to{background:transparent} }
+
+.ev-ts    { color: var(--dim); width: 64px; flex-shrink: 0; font-size: 11px; }
+.ev-phase { width: 22px; flex-shrink: 0; text-align: center; font-size: 10px; border-radius: 2px; padding: 0 2px; }
+.ev-phase.p1 { background:#1a3a5c; color:#58a6ff; }
+.ev-phase.p2 { background:#1a4a2e; color:#3fb950; }
+.ev-phase.p3 { background:#3a2a5c; color:#bc8cff; }
+.ev-type  { color: var(--cyan); width: 200px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-type.direct  { color: var(--amber); }
+.ev-type.command { color: var(--yellow); }
+.ev-type.error   { color: var(--red); }
+.ev-msg   { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Status bar */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 16px;
+  background: var(--bg1);
+  border-top: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 11px;
+}
+.statusbar-item span { color: var(--text); }
+.statusbar-conn { margin-left: auto; }
+.statusbar-conn.ok  { color: var(--green); }
+.statusbar-conn.err { color: var(--red); }
+.statusbar-conn.connecting { color: var(--amber); }
+
+/* Worker badges */
+.badge-running { color: #f59e0b; font-weight: 600; }
+.badge-done    { color: #10b981; font-weight: 600; }
+.badge-failed  { color: #ef4444; font-weight: 600; }
+.badge-pending { color: #6b7280; }
+
+/* Goal in header */
+.header-goal { color: var(--text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 400px; }
+
+/* Progress bar */
+.progress-bar { height: 2px; background: var(--border); }
+.progress-fill { height: 100%; background: var(--blue); transition: width .6s ease; width: 0; }
+
+/* Active session panel */
+.session-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+.session-label { color: var(--dim); }
+.session-value { color: var(--bright); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+
+/* Artifacts */
+.artifact-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 240px;
+  max-height: 280px;
+  border-bottom: 1px solid var(--border);
+}
+.artifact-list {
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: rgba(13,17,23,.7);
+}
+.artifact-item {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(30,45,61,.5);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.artifact-item:hover,
+.artifact-item.active { background: var(--bg2); }
+.artifact-kind { color: var(--cyan); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+.artifact-label { color: var(--bright); font-size: 12px; margin-top: 3px; }
+.artifact-meta { color: var(--dim); font-size: 11px; margin-top: 4px; }
+.artifact-preview-wrap {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.artifact-preview-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg1);
+}
+.artifact-preview-title { color: var(--bright); font-size: 12px; }
+.artifact-preview-path { color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-preview {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+/* Completion banner */
+.completion-banner {
+  display: none;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(59,130,246,.1), rgba(56,211,100,.1));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin: 8px 16px;
+  text-align: center;
+}
+.completion-banner.show { display: block; }
+.completion-title { color: var(--green); font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.completion-detail { color: var(--dim); font-size: 12px; }
+
+/* Empty state */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 8px;
+  color: var(--dim);
+}
+.empty-state .icon { font-size: 32px; }
+</style>
+</head>
+<body>
+<div class="grid">
+
+<!-- Header -->
+<header class="header">
+  <span class="status-dot" id="statusDot"></span>
+  <span class="header-logo">◉ MISSION CONTROL</span>
+  <span class="header-sep">·</span>
+  <span class="header-run" id="headerRun">connecting...</span>
+  <span class="header-goal" id="headerGoal"></span>
+  <span class="header-elapsed" id="headerElapsed">–</span>
+</header>
+<div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+
+<!-- Main -->
+<div class="main">
+
+  <!-- Left: phases + stats -->
+  <aside class="panel-left">
+    <div class="panel-section">
+      <div class="panel-label">Phases</div>
+      <div id="phases">
+        <div class="phase-row pending" data-phase="1">
+          <div class="phase-icon">·</div>
+          <div class="phase-info">
+            <div class="phase-name">Discovery</div>
+            <div class="phase-meta" id="phaseMeta1">pending</div>
+          </div>
+        </div>
+        <div class="phase-row pending" data-phase="2">
+          <div class="phase-icon">·</div>
+          <div class="phase-info">
+            <div class="phase-name">Implementation</div>
+            <div class="phase-meta" id="phaseMeta2">pending</div>
+          </div>
+        </div>
+        <div class="phase-row pending" data-phase="3">
+          <div class="phase-icon">·</div>
+          <div class="phase-info">
+            <div class="phase-name">Validation</div>
+            <div class="phase-meta" id="phaseMeta3">pending</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-label">Telemetry</div>
+      <div class="stat-row"><span class="stat-label">cost</span><span class="stat-value cost" id="statCost">$0.0000</span></div>
+      <div class="stat-row"><span class="stat-label">tools</span><span class="stat-value" id="statTools">0</span></div>
+      <div class="stat-row"><span class="stat-label">events</span><span class="stat-value" id="statEvents">0</span></div>
+      <div class="stat-row"><span class="stat-label">backend</span><span class="stat-value active" id="statBackend">–</span></div>
+    </div>
+
+    <div class="panel-section" id="sessionSection">
+      <div class="panel-label">Active Session</div>
+      <div class="session-row"><span class="session-label">phase</span><span class="session-value" id="sessionPhase">–</span></div>
+      <div class="session-row"><span class="session-label">last tool</span><span class="session-value" id="sessionTool">–</span></div>
+      <div class="session-row"><span class="session-label">turns</span><span class="session-value" id="sessionTurns">0</span></div>
+      <div class="session-row"><span class="session-label">phase cost</span><span class="session-value cost" id="sessionCost">$0.0000</span></div>
+    </div>
+
+    <div class="panel-section" id="workerSection" style="display:none">
+      <div class="panel-label">Workers</div>
+      <div id="workerList"></div>
+    </div>
+
+    <div class="panel-section" id="workers-panel" style="display:none">
+      <div class="panel-label">Implementation Workers</div>
+      <table id="workers-table" style="width:100%;border-collapse:collapse;">
+        <thead><tr><th style="text-align:left;padding:4px 8px;">Bead</th><th style="text-align:left;padding:4px 8px;">Worker</th><th style="text-align:left;padding:4px 8px;">Status</th><th style="text-align:left;padding:4px 8px;">Attempts</th><th style="text-align:left;padding:4px 8px;">Duration</th></tr></thead>
+        <tbody id="workers-body"></tbody>
+      </table>
+    </div>
+  </aside>
+
+  <!-- Right: event feed -->
+  <section class="panel-right">
+    <div class="events-header">
+      <span class="events-label">Artifact Timeline</span>
+    </div>
+    <div class="artifact-shell">
+      <div class="artifact-list" id="artifactList">
+        <div class="empty-state">
+          <div class="icon">🗂</div>
+          <div>Waiting for artifacts...</div>
+        </div>
+      </div>
+      <div class="artifact-preview-wrap">
+        <div class="artifact-preview-header">
+          <div class="artifact-preview-title" id="artifactPreviewTitle">Artifact preview</div>
+          <div class="artifact-preview-path" id="artifactPreviewPath">Select a run artifact to inspect</div>
+        </div>
+        <pre class="artifact-preview" id="artifactPreview">Waiting for artifacts...</pre>
+      </div>
+    </div>
+    <div class="events-header">
+      <span class="events-label">Telemetry Feed</span>
+      <button class="follow-btn active" id="followBtn" onclick="toggleFollow()">↓ follow</button>
+      <span class="events-count" id="eventsCount">0 events</span>
+    </div>
+    <div class="completion-banner" id="completionBanner">
+      <div class="completion-title" id="completionTitle">Run Complete</div>
+      <div class="completion-detail" id="completionDetail"></div>
+    </div>
+    <div class="events-feed" id="eventsFeed">
+      <div class="empty-state" id="emptyState">
+        <div class="icon">⌛</div>
+        <div>Waiting for events...</div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- Error banner -->
+<div id="error-banner" style="display:none; background:#dc3545; color:white; padding:8px 16px; text-align:center; position:sticky; top:0; z-index:100; font-family:sans-serif;"></div>
+
+<!-- Status bar -->
+<footer class="statusbar">
+  <span class="statusbar-item">run: <span id="sbRun">–</span></span>
+  <span class="statusbar-item">phase: <span id="sbPhase">–</span></span>
+  <span class="statusbar-conn connecting" id="sbConn">● connecting</span>
+</footer>
+
+</div>
+
+<script>
+const MAX_EVENTS = 2000;
+const PHASE_NAMES = {1:'Discovery', 2:'Implementation', 3:'Validation'};
+
+let runId = new URLSearchParams(location.search).get('run') || '';
+const explicitRun = !!runId;
+const autoFollowRuns = !explicitRun;
+let following = true;
+let eventCount = 0;
+let stats = { cost: 0, tools: 0, backend: '' };
+let phaseCosts = {}; // track per-phase cumulative cost
+let phases = { 1:{status:'pending',start:null,end:null,tools:0,cost:0}, 2:{status:'pending',start:null,end:null,tools:0,cost:0}, 3:{status:'pending',start:null,end:null,tools:0,cost:0} };
+let session = { phase: 0, lastTool: '', turns: 0, phaseCost: 0 };
+let workers = {};
+let startTime = Date.now();
+let evSource = null;
+let stateInterval = null;
+let runsInterval = null;
+let connectGeneration = 0;
+let artifacts = [];
+let selectedArtifactPath = '';
+
+function init() {
+  updateRunLabels();
+  if (runId) {
+    connect();
+  }
+  if (autoFollowRuns) {
+    // No run-id provided — poll /runs to auto-discover active runs
+    pollForRuns();
+    runsInterval = setInterval(pollForRuns, 3000);
+  }
+  // Poll /state every 5s to reconcile phase state from ground truth
+  stateInterval = setInterval(pollState, 5000);
+  setInterval(updateElapsed, 1000);
+}
+
+function pollForRuns() {
+  fetch('/runs').then(function(r){return r.json();}).then(function(runs) {
+    if (!runs || !runs.length) return;
+    var target = pickRunTarget(runs);
+    if (target && target.run_id && target.run_id !== runId) {
+      activateRun(target.run_id);
+    }
+  }).catch(function(){});
+}
+
+function pollState() {
+  var url = '/state' + (runId ? '?run-id=' + encodeURIComponent(runId) : '');
+  fetch(url).then(function(r){return r.json();}).then(function(state) {
+    if (!state) return;
+    // Auto-discover run-id from state if we don't have one
+    if (autoFollowRuns && !runId && state.phased_state && state.phased_state.run_id) {
+      activateRun(state.phased_state.run_id);
+    }
+    // Reconcile phase state from phased_state.json (ground truth)
+    if (state.phased_state) {
+      reconcileFromState(state.phased_state);
+    }
+    // Reconcile from phase results
+    if (state.phase_results) {
+      reconcileFromPhaseResults(state.phase_results);
+    }
+    if (state.artifacts) {
+      reconcileArtifacts(state.artifacts);
+    }
+  }).catch(function(){});
+}
+
+function reconcileFromState(ps) {
+  // Update goal if not set
+  if (ps.goal) {
+    var goalEl = document.getElementById('headerGoal');
+    if (!goalEl.textContent) goalEl.textContent = ps.goal;
+  }
+  // Update backend
+  if (ps.backend && !stats.backend) {
+    stats.backend = ps.backend;
+    document.getElementById('statBackend').textContent = ps.backend;
+  }
+  // Update terminal status
+  if (ps.terminal_status === 'completed' || ps.terminal_status === 'failed') {
+    var dot = document.getElementById('statusDot');
+    dot.className = 'status-dot ' + (ps.terminal_status === 'failed' ? 'failed' : 'done');
+    setConn('ok', ps.terminal_status === 'failed' ? '● failed' : '● completed');
+  }
+  // Update current phase from state
+  if (ps.current_phase && typeof ps.current_phase === 'number') {
+    document.getElementById('sbPhase').textContent = (PHASE_NAMES[ps.current_phase] || ps.current_phase);
+    session.phase = ps.current_phase;
+    document.getElementById('sessionPhase').textContent = PHASE_NAMES[ps.current_phase] || ('Phase ' + ps.current_phase);
+  }
+}
+
+function reconcileFromPhaseResults(results) {
+  for (var key in results) {
+    var pr = results[key];
+    var num = pr.phase;
+    if (!num || !phases[num]) continue;
+    var p = phases[num];
+    // Only upgrade status — never downgrade from a more advanced state
+    if (pr.status === 'completed' && p.status !== 'done') {
+      p.status = 'done';
+      if (pr.started_at) p.start = new Date(pr.started_at);
+      if (pr.completed_at) p.end = new Date(pr.completed_at);
+      refreshPhaseDisplay(num);
+    } else if (pr.status === 'failed' && p.status !== 'failed') {
+      p.status = 'failed';
+      if (pr.started_at) p.start = new Date(pr.started_at);
+      if (pr.completed_at) p.end = new Date(pr.completed_at);
+      refreshPhaseDisplay(num);
+    } else if (pr.status === 'running' && p.status === 'pending') {
+      p.status = 'running';
+      if (pr.started_at) p.start = new Date(pr.started_at);
+      refreshPhaseDisplay(num);
+    }
+  }
+  updateProgress();
+}
+
+let reconnectDelay = 1000;
+const MAX_RECONNECT_DELAY = 16000;
+
+function showErrorBanner(msg) {
+  const banner = document.getElementById('error-banner');
+  if (banner) { banner.textContent = msg; banner.style.display = 'block'; }
+}
+function hideErrorBanner() {
+  const banner = document.getElementById('error-banner');
+  if (banner) { banner.style.display = 'none'; }
+}
+
+function connect() {
+  const generation = ++connectGeneration;
+  const url = '/events' + (runId ? '?run-id=' + encodeURIComponent(runId) : '');
+  evSource = new EventSource(url);
+  evSource.onopen = function() {
+    if (generation !== connectGeneration) return;
+    reconnectDelay = 1000;
+    hideErrorBanner();
+    setConn('ok', '● live');
+  };
+  evSource.onerror = function() {
+    if (generation !== connectGeneration) return;
+    evSource.close();
+    setConn('err', '● disconnected');
+    showErrorBanner('Connection lost. Reconnecting in ' + (reconnectDelay/1000) + 's...');
+    setTimeout(function() {
+      if (generation !== connectGeneration) return;
+      reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
+      connect();
+    }, reconnectDelay);
+  };
+  evSource.onmessage = function(e) {
+    if (generation !== connectGeneration) return;
+    try { handleEvent(JSON.parse(e.data)); } catch(_) {}
+  };
+}
+
+function updateRunLabels() {
+  document.getElementById('headerRun').textContent = runId || '(auto-discovering...)';
+  document.getElementById('sbRun').textContent = runId || '(auto)';
+}
+
+function pickRunTarget(runs) {
+  if (!runs || !runs.length) return null;
+  var active = runs.filter(function(run){ return run.is_active || run.status === 'running' || run.status === 'active'; });
+  if (active.length > 0) return active[0];
+  return runs[0];
+}
+
+function resetRunState() {
+  eventCount = 0;
+  stats = { cost: 0, tools: 0, backend: '' };
+  phaseCosts = {};
+  phases = { 1:{status:'pending',start:null,end:null,tools:0,cost:0}, 2:{status:'pending',start:null,end:null,tools:0,cost:0}, 3:{status:'pending',start:null,end:null,tools:0,cost:0} };
+  session = { phase: 0, lastTool: '', turns: 0, phaseCost: 0 };
+  workers = {};
+  startTime = Date.now();
+  document.getElementById('headerGoal').textContent = '';
+  document.getElementById('headerElapsed').textContent = '0s';
+  document.getElementById('statusDot').className = 'status-dot';
+  document.getElementById('statCost').textContent = '$0.0000';
+  document.getElementById('statTools').textContent = '0';
+  document.getElementById('statEvents').textContent = '0';
+  document.getElementById('statBackend').textContent = '–';
+  document.getElementById('sessionPhase').textContent = '–';
+  document.getElementById('sessionTool').textContent = '–';
+  document.getElementById('sessionTurns').textContent = '0';
+  document.getElementById('sessionCost').textContent = '$0.0000';
+  document.getElementById('sbPhase').textContent = '–';
+  document.getElementById('eventsCount').textContent = '0 events';
+  document.getElementById('workerSection').style.display = 'none';
+  document.getElementById('workerList').textContent = '';
+  document.getElementById('workers-panel').style.display = 'none';
+  document.getElementById('workers-body').textContent = '';
+  document.getElementById('completionBanner').classList.remove('show');
+  artifacts = [];
+  selectedArtifactPath = '';
+  document.getElementById('artifactList').textContent = '';
+  document.getElementById('artifactPreviewTitle').textContent = 'Artifact preview';
+  document.getElementById('artifactPreviewPath').textContent = 'Select a run artifact to inspect';
+  document.getElementById('artifactPreview').textContent = 'Waiting for artifacts...';
+  resetEventFeed();
+  for (var i = 1; i <= 3; i++) refreshPhaseDisplay(i);
+  updateProgress();
+  setConn('connecting', '● connecting');
+}
+
+function resetEventFeed() {
+  const feed = document.getElementById('eventsFeed');
+  feed.textContent = '';
+  const empty = document.createElement('div');
+  empty.className = 'empty-state';
+  empty.id = 'emptyState';
+  const icon = document.createElement('div');
+  icon.className = 'icon';
+  icon.textContent = '⌛';
+  const label = document.createElement('div');
+  label.textContent = 'Waiting for events...';
+  empty.appendChild(icon);
+  empty.appendChild(label);
+  feed.appendChild(empty);
+}
+
+function activateRun(nextRunId) {
+  if (!nextRunId || nextRunId === runId) return;
+  if (evSource) {
+    connectGeneration++;
+    evSource.close();
+    evSource = null;
+  }
+  runId = nextRunId;
+  updateRunLabels();
+  resetRunState();
+  connect();
+}
+
+function setConn(cls, text) {
+  const el = document.getElementById('sbConn');
+  el.className = 'statusbar-conn ' + cls;
+  el.textContent = text;
+}
+
+function reconcileArtifacts(nextArtifacts) {
+  if (!Array.isArray(nextArtifacts)) return;
+  artifacts = nextArtifacts.slice();
+  renderArtifacts();
+  if (!selectedArtifactPath && artifacts.length > 0) {
+    selectArtifact(artifacts[0].path);
+  }
+}
+
+function renderArtifacts() {
+  const list = document.getElementById('artifactList');
+  list.textContent = '';
+  if (!artifacts.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.style.height = '100%';
+    const icon = document.createElement('div');
+    icon.className = 'icon';
+    icon.textContent = '🗂';
+    const label = document.createElement('div');
+    label.textContent = 'No run artifacts yet';
+    empty.appendChild(icon);
+    empty.appendChild(label);
+    list.appendChild(empty);
+    return;
+  }
+
+  artifacts.forEach(function(artifact) {
+    const button = document.createElement('button');
+    button.className = 'artifact-item' + (artifact.path === selectedArtifactPath ? ' active' : '');
+    button.onclick = function() { selectArtifact(artifact.path); };
+
+    const kind = document.createElement('div');
+    kind.className = 'artifact-kind';
+    kind.textContent = artifact.kind || 'artifact';
+    button.appendChild(kind);
+
+    const label = document.createElement('div');
+    label.className = 'artifact-label';
+    label.textContent = artifact.label || artifact.path;
+    button.appendChild(label);
+
+    const meta = document.createElement('div');
+    meta.className = 'artifact-meta';
+    meta.textContent = (artifact.updated_at ? artifact.updated_at.replace('T', ' ').replace('Z', ' UTC') : '') + (artifact.size_bytes ? ' · ' + artifact.size_bytes + ' bytes' : '');
+    button.appendChild(meta);
+
+    list.appendChild(button);
+  });
+}
+
+function selectArtifact(path) {
+  if (!path) return;
+  selectedArtifactPath = path;
+  renderArtifacts();
+
+  const params = new URLSearchParams();
+  params.set('path', path);
+  if (runId) params.set('run-id', runId);
+
+  fetch('/artifact?' + params.toString()).then(function(r){ return r.json(); }).then(function(payload) {
+    if (!payload) return;
+    document.getElementById('artifactPreviewTitle').textContent = payload.label || payload.kind || 'Artifact preview';
+    document.getElementById('artifactPreviewPath').textContent = payload.path || path;
+    let body = payload.body || '';
+    if (payload.content_type === 'application/json') {
+      try {
+        body = JSON.stringify(JSON.parse(body), null, 2);
+      } catch (_) {}
+    }
+    if (payload.truncated) body += '\n\n[truncated preview]';
+    document.getElementById('artifactPreview').textContent = body || '(empty artifact)';
+  }).catch(function() {
+    document.getElementById('artifactPreviewTitle').textContent = 'Artifact preview';
+    document.getElementById('artifactPreviewPath').textContent = path;
+    document.getElementById('artifactPreview').textContent = 'Unable to load artifact preview.';
+  });
+}
+
+function handleEvent(ev) {
+  eventCount++;
+  document.getElementById('statEvents').textContent = eventCount;
+  document.getElementById('eventsCount').textContent = eventCount + ' events';
+
+  const type = ev.type || '';
+  const phase = ev.phase || 0;
+
+  // Backend
+  if (ev.backend && !stats.backend) {
+    stats.backend = ev.backend;
+    document.getElementById('statBackend').textContent = ev.backend;
+    document.getElementById('statBackend').style.color = ev.backend === 'stream' ? 'var(--green)' : 'var(--amber)';
+  }
+
+  // Phase 0 events (run lifecycle)
+  if (type === 'run.started') {
+    document.getElementById('headerGoal').textContent = ev.message || '';
+    startTime = ev.timestamp ? new Date(ev.timestamp).getTime() : Date.now();
+    addEventRow(ev);
+    return;
+  }
+  if (type === 'run.completed') {
+    const d = ev.details || {};
+    setConn('ok', '● completed');
+    document.getElementById('statusDot').className = 'status-dot done';
+    const banner = document.getElementById('completionBanner');
+    banner.classList.add('show');
+    const status = d.status || 'completed';
+    document.getElementById('completionTitle').textContent = status === 'failed' ? 'Run Failed' : 'Run Complete';
+    document.getElementById('completionDetail').textContent = (ev.message || '') + (stats.cost > 0 ? ' · $' + stats.cost.toFixed(4) : '');
+    updateProgress();
+    addEventRow(ev);
+    return;
+  }
+
+  // Phase state machine
+  updatePhase(phase, type, ev.timestamp);
+
+  // Worker tracking
+  if (ev.worker_id) updateWorker(ev.worker_id, phase, type);
+
+  // Per-bead worker table
+  if (type && type.startsWith('worker.bead.')) {
+    const d = ev.details || {};
+    updateWorkerRow(ev.worker_id || '', d.bead_id || ev.worker_id || '', type, ev.timestamp || new Date().toISOString());
+  }
+
+  // Tools
+  if (type.includes('tool_use')) {
+    stats.tools++;
+    document.getElementById('statTools').textContent = stats.tools;
+    if (phases[phase]) phases[phase].tools++;
+    refreshPhaseDisplay(phase);
+    // Session panel: last tool
+    if (ev.details && ev.details.tool_name) {
+      session.lastTool = ev.details.tool_name;
+      document.getElementById('sessionTool').textContent = session.lastTool;
+    }
+  }
+
+  // Turns (from stream.result events)
+  if (type === 'stream.result' && ev.details && ev.details.num_turns) {
+    session.turns = ev.details.num_turns;
+    document.getElementById('sessionTurns').textContent = session.turns;
+  }
+
+  // Cost: track per-phase max (each phase session reports cumulative cost within
+  // that session), then sum across phases for total run cost.
+  if (ev.details && typeof ev.details === 'object' && typeof ev.details.cost_usd === 'number' && ev.details.cost_usd > 0) {
+    var phaseKey = phase || 0;
+    if (!phaseCosts[phaseKey] || ev.details.cost_usd > phaseCosts[phaseKey]) {
+      phaseCosts[phaseKey] = ev.details.cost_usd;
+    }
+    // Sum all per-phase max costs for total
+    stats.cost = Object.values(phaseCosts).reduce(function(a,b){return a+b;}, 0);
+    document.getElementById('statCost').textContent = '$' + stats.cost.toFixed(4);
+    // Per-phase cost tracking
+    if (phases[phase]) {
+      phases[phase].cost = phaseCosts[phaseKey];
+      session.phaseCost = phaseCosts[phaseKey];
+      document.getElementById('sessionCost').textContent = '$' + session.phaseCost.toFixed(4);
+    }
+  }
+
+  // Status dot
+  const anyRunning = Object.values(phases).some(p => p.status === 'running');
+  const anyFailed  = Object.values(phases).some(p => p.status === 'failed');
+  const allDone    = Object.values(phases).every(p => p.status === 'done' || p.status === 'pending');
+  const dot = document.getElementById('statusDot');
+  dot.className = 'status-dot ' + (anyFailed ? 'failed' : anyRunning ? 'running' : allDone ? '' : '');
+
+  // Append event row
+  addEventRow(ev);
+}
+
+function updatePhase(num, type, ts) {
+  if (!phases[num]) return;
+  const p = phases[num];
+  const t = ts ? new Date(ts) : new Date();
+
+  if (type.endsWith('.started') && p.status === 'pending') {
+    p.status = 'running';
+    p.start = t;
+    document.getElementById('sbPhase').textContent = (PHASE_NAMES[num] || num) + ' (running)';
+    // Reset session panel for new phase
+    session.phase = num;
+    session.lastTool = '';
+    session.turns = 0;
+    session.phaseCost = 0;
+    document.getElementById('sessionPhase').textContent = PHASE_NAMES[num] || ('Phase ' + num);
+    document.getElementById('sessionTool').textContent = '–';
+    document.getElementById('sessionTurns').textContent = '0';
+    document.getElementById('sessionCost').textContent = '$0.0000';
+  } else if (type.endsWith('.completed') && p.status !== 'done') {
+    p.status = 'done';
+    p.end = t;
+  } else if (type.endsWith('.failed')) {
+    p.status = 'failed';
+    p.end = t;
+  }
+  refreshPhaseDisplay(num);
+  updateProgress();
+}
+
+function refreshPhaseDisplay(num) {
+  const p = phases[num];
+  if (!p) return;
+  const row = document.querySelector('[data-phase="' + num + '"]');
+  if (!row) return;
+  row.className = 'phase-row ' + p.status;
+  const icon = row.querySelector('.phase-icon');
+  icon.textContent = {running:'▶', done:'✓', failed:'✗', pending:'·'}[p.status] || '·';
+  const meta = document.getElementById('phaseMeta' + num);
+  let txt = p.status;
+  if (p.start) {
+    const end = p.end || new Date();
+    const secs = Math.floor((end - p.start) / 1000);
+    txt += ' · ' + (secs < 60 ? secs + 's' : Math.floor(secs/60) + 'm ' + (secs%60) + 's');
+  }
+  if (p.tools > 0) txt += ' · tools: ' + p.tools;
+  meta.textContent = txt;
+}
+
+function updateWorker(wid, phase, type) {
+  if (!workers[wid]) {
+    workers[wid] = { phase, status: 'running', events: 0 };
+    document.getElementById('workerSection').style.display = '';
+  }
+  workers[wid].events++;
+  if (type.includes('completed') || type.includes('done')) workers[wid].status = 'done';
+  if (type.includes('failed')) workers[wid].status = 'failed';
+  renderWorkers();
+}
+
+function renderWorkers() {
+  const list = document.getElementById('workerList');
+  list.textContent = '';
+  Object.entries(workers).forEach(([wid, w]) => {
+    const icon = w.status === 'done' ? '✓' : w.status === 'failed' ? '✗' : '▶';
+    const row = document.createElement('div');
+    row.className = 'stat-row';
+    const label = document.createElement('span');
+    label.className = 'stat-label';
+    label.textContent = icon + ' ' + wid;
+    const val = document.createElement('span');
+    val.className = 'stat-value';
+    val.textContent = w.events + ' evts';
+    row.appendChild(label);
+    row.appendChild(val);
+    list.appendChild(row);
+  });
+}
+
+function escapeHTML(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function addEventRow(ev) {
+  const feed = document.getElementById('eventsFeed');
+  const empty = document.getElementById('emptyState');
+  if (empty) empty.remove();
+
+  // Prune if over limit
+  const rows = feed.querySelectorAll('.event-row');
+  if (rows.length >= MAX_EVENTS) rows[0].remove();
+
+  const type = ev.type || '';
+  const phase = ev.phase || 0;
+  const ts = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString('en-US', {hour12:false}) : '';
+  const msg = ev.message || '';
+
+  let typeClass = '';
+  if (type.startsWith('phase.direct')) typeClass = 'direct';
+  else if (type.startsWith('command.')) typeClass = 'command';
+  else if (type.includes('fail') || type.includes('error')) typeClass = 'error';
+
+  const row = document.createElement('div');
+  row.className = 'event-row new' + (phase > 0 ? ' phase-' + phase : '');
+
+  // Build child elements via DOM (no innerHTML)
+  row.textContent = '';
+  const tsSpan = document.createElement('span');
+  tsSpan.className = 'ev-ts';
+  tsSpan.textContent = ts;
+  row.appendChild(tsSpan);
+
+  const phaseSpan = document.createElement('span');
+  if (phase > 0) {
+    phaseSpan.className = 'ev-phase p' + phase;
+    phaseSpan.textContent = phase;
+  } else {
+    phaseSpan.className = 'ev-phase';
+  }
+  row.appendChild(phaseSpan);
+
+  const typeSpan = document.createElement('span');
+  typeSpan.className = 'ev-type' + (typeClass ? ' ' + typeClass : '');
+  typeSpan.title = type;
+  typeSpan.textContent = type;
+  row.appendChild(typeSpan);
+
+  const msgSpan = document.createElement('span');
+  msgSpan.className = 'ev-msg';
+  msgSpan.textContent = msg;
+  row.appendChild(msgSpan);
+
+  feed.appendChild(row);
+  setTimeout(() => row.classList.remove('new'), 500);
+
+  if (following) feed.scrollTop = feed.scrollHeight;
+}
+
+function toggleFollow() {
+  following = !following;
+  const btn = document.getElementById('followBtn');
+  btn.className = 'follow-btn' + (following ? ' active' : '');
+  btn.textContent = following ? '↓ follow' : '⏸ paused';
+  if (following) document.getElementById('eventsFeed').scrollTop = document.getElementById('eventsFeed').scrollHeight;
+}
+
+function updateElapsed() {
+  const secs = Math.floor((Date.now() - startTime) / 1000);
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  document.getElementById('headerElapsed').textContent = (m > 0 ? m + 'm ' : '') + s + 's';
+}
+
+document.getElementById('eventsFeed').addEventListener('scroll', function() {
+  const el = this;
+  const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
+  if (!atBottom && following) {
+    following = false;
+    const btn = document.getElementById('followBtn');
+    btn.className = 'follow-btn';
+    btn.textContent = '⏸ paused';
+  }
+});
+
+const workerStartTimes = new Map();
+
+function updateWorkerRow(workerID, beadID, evType, ts) {
+  const panel = document.getElementById('workers-panel');
+  const tbody = document.getElementById('workers-body');
+  if (!tbody) return;
+  panel.style.display = '';
+  let row = document.getElementById('worker-' + workerID);
+  if (!row) {
+    row = document.createElement('tr');
+    row.id = 'worker-' + workerID;
+    var cols = [
+      {cls:'bead-col', text:'', style:'padding:4px 8px;'},
+      {cls:'wid-col', text:'', style:'padding:4px 8px;font-family:monospace;font-size:0.85em;'},
+      {cls:'status-col', text:'', style:'padding:4px 8px;'},
+      {cls:'attempts-col', text:'1', style:'padding:4px 8px;'},
+      {cls:'dur-col', text:'\u2014', style:'padding:4px 8px;'}
+    ];
+    cols.forEach(function(c) {
+      var td = document.createElement('td');
+      td.className = c.cls;
+      td.style.cssText = c.style;
+      td.textContent = c.text;
+      row.appendChild(td);
+    });
+    tbody.appendChild(row);
+  }
+  row.querySelector('.bead-col').textContent = beadID || '';
+  row.querySelector('.wid-col').textContent = workerID;
+  let statusText = 'pending', badgeClass = 'badge-pending';
+  if (evType === 'worker.bead.spawned') {
+    statusText = 'running'; badgeClass = 'badge-running';
+    workerStartTimes.set(workerID, new Date(ts).getTime());
+  } else if (evType === 'worker.bead.done') {
+    statusText = 'done'; badgeClass = 'badge-done';
+  } else if (evType === 'worker.bead.failed') {
+    statusText = 'failed'; badgeClass = 'badge-failed';
+  }
+  var statusCol = row.querySelector('.status-col');
+  statusCol.textContent = '';
+  var badge = document.createElement('span');
+  badge.className = badgeClass;
+  badge.textContent = statusText;
+  statusCol.appendChild(badge);
+  if (evType === 'worker.bead.done' || evType === 'worker.bead.failed') {
+    const start = workerStartTimes.get(workerID);
+    if (start) {
+      const s = Math.round((new Date(ts).getTime() - start) / 1000);
+      row.querySelector('.dur-col').textContent = s + 's';
+    }
+  }
+}
+
+function updateProgress() {
+  const completed = Object.values(phases).filter(p => p.status === 'done').length;
+  const total = Object.keys(phases).length;
+  const pct = Math.round((completed / total) * 100);
+  document.getElementById('progressFill').style.width = pct + '%';
+}
+
+init();
+</script>
+</body>
+</html>

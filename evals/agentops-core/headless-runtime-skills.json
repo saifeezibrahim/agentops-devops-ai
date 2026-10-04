@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "id": "agentops-core.headless-runtime-skills",
+  "name": "AgentOps Headless Runtime Skills Canary",
+  "description": "Optional canary for caller-selected Claude and Codex headless skill inventory validation.",
+  "practices": ["llm-eval-harness", "sre"],
+  "domain": "runtime",
+  "visibility": "public_canary",
+  "tier": "deterministic",
+  "owners": ["agentops"],
+  "tags": ["canary", "headless", "runtime", "skills", "claude", "codex"],
+  "allowed_runtimes": ["shell", "static"],
+  "environment": {
+    "offline_required": false,
+    "network": "allowed",
+    "scrub_env_prefixes": ["AGENTOPS_RPI_RUNTIME"],
+    "isolate_codex_home": true,
+    "timeout_seconds": 180
+  },
+  "scoring": {
+    "aggregate_threshold": 1,
+    "dimensions": [
+      {"name": "correctness", "weight": 2, "threshold": 1, "critical": true},
+      {"name": "runtime_compatibility", "weight": 2, "threshold": 1, "critical": true},
+      {"name": "process_adherence", "weight": 1, "threshold": 1},
+      {"name": "artifact_quality", "weight": 1, "threshold": 1},
+      {"name": "safety", "weight": 1, "threshold": 1, "critical": true}
+    ]
+  },
+  "baseline_policy": {"mode": "compare", "baseline_path": ".agents/evals/baselines/agentops-core.headless-runtime-skills.baseline.json", "blocking_gate": "none"},
+  "cases": [
+    {
+      "id": "headless-runtime-script-tests",
+      "title": "headless runtime skill validator script tests pass",
+      "kind": "command",
+      "objective": "Exercise mocked Claude and Codex skill inventories, retry behavior, malformed output fallback, and strict-mode failure paths deterministically.",
+      "runtime": "shell",
+      "inputs": {
+        "cwd": "../..",
+        "shell": "bash tests/scripts/test-headless-runtime-skills.sh"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains", "value": "Results: 7 PASS, 0 FAIL"}
+      ],
+      "dimensions": ["correctness", "runtime_compatibility", "safety"],
+      "critical": true
+    },
+    {
+      "id": "headless-runtime-validation",
+      "title": "headless runtime skill validation command passes",
+      "kind": "command",
+      "objective": "Run the optional headless runtime inventory validator when a caller explicitly selects it.",
+      "runtime": "shell",
+      "timeout_seconds": 210,
+      "inputs": {
+        "cwd": "../..",
+        "shell": "bash scripts/REDACTED.sh --timeout 120"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains", "value": "Runtime proof tiers:"},
+        {"type": "stdout_contains", "value": "Headless runtime skill validation passed."}
+      ],
+      "dimensions": ["correctness", "runtime_compatibility", "process_adherence"],
+      "critical": true
+    },
+    {
+      "id": "REDACTED",
+      "title": "headless runtime validation is not a core gate",
+      "kind": "command",
+      "objective": "Prove optional live-runtime probing is not required by ordinary CI, local release, or smoke dispatch.",
+      "runtime": "shell",
+      "inputs": {
+        "cwd": "../..",
+        "shell": "! rg -n 'REDACTED|test-headless-runtime-skills' .github/workflows/validate.yml scripts/ci-local-release.sh tests/smoke-test.sh"
+      },
+      "expectations": [{"type": "exit_code", "value": 0}],
+      "dimensions": ["process_adherence", "artifact_quality", "runtime_compatibility"],
+      "critical": true
+    },
+    {
+      "id": "REDACTED",
+      "title": "headless runtime validator preserves inventory controls",
+      "kind": "artifact_check",
+      "objective": "Ensure Claude and Codex inventories are built from shipped skill roots and retain strict-mode and fallback controls.",
+      "expectations": [
+        {"type": "artifact_contains", "target": "../../scripts/REDACTED.sh", "value": "build_expected_inventory \"$REPO_ROOT/skills\" \"$EXPECTED_CLAUDE_JSON\""},
+        {"type": "artifact_contains", "target": "../../scripts/REDACTED.sh", "value": "build_expected_inventory \"$REPO_ROOT/skills-codex\" \"$EXPECTED_CODEX_JSON\""},
+        {"type": "artifact_contains", "target": "../../scripts/REDACTED.sh", "value": "REDACTED"},
+        {"type": "artifact_contains", "target": "../../scripts/REDACTED.sh", "value": "REDACTED"},
+        {"type": "artifact_contains", "target": "../../scripts/REDACTED.sh", "value": "load-check fallback"},
+        {"type": "artifact_contains", "target": "../../scripts/REDACTED.sh", "value": "CODEX_HOME=\"$CODEX_VALIDATION_HOME\""},
+        {"type": "artifact_contains", "target": "../../scripts/REDACTED.sh", "value": "AGENTOPS_HOOKS_DISABLED=1"}
+      ],
+      "dimensions": ["runtime_compatibility", "safety", "artifact_quality"],
+      "critical": true
+    }
+  ]
+}

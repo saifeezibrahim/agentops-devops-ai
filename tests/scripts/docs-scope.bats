@@ -1,0 +1,118 @@
+#!/usr/bin/env bats
+#
+# Tests for scripts/lib/docs-scope.sh — the shared LIVE-doc scope resolver
+# (docs_scope_live_files) and the historical-exemption test
+# (docs_scope_is_exempt) for LIVE-doc scoping
+# (age-gate-the-ungated-egwt.1).
+#
+# Sibling pattern: matches tests/scripts/check-workflow-no-retired-tracker.bats
+# and test-check-docs-learning-references.bats — build a fixture docs tree in
+# BATS_TEST_TMPDIR, point the lib at it via the injectable DOCS_ROOT seam, and
+# assert scope membership + exemption verdicts.
+#
+# The lib is SOURCED (not executed); it deliberately does NOT set strict mode on
+# behalf of a caller, so these tests source it directly and call its functions.
+
+setup() {
+    REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+    LIB="$REPO_ROOT/scripts/lib/docs-scope.sh"
+    [ -r "$LIB" ]
+    # shellcheck source=/dev/null
+    . "$LIB"
+
+    # Fixture docs tree under an injected DOCS_ROOT.
+    export DOCS_ROOT="$BATS_TEST_TMPDIR/fix"
+    mkdir -p "$DOCS_ROOT/docs" \
+             "$DOCS_ROOT/docs/adr" \
+             "$DOCS_ROOT/docs/audits" \
+             "$DOCS_ROOT/docs/plans"
+
+    # A plain live doc (in scope, not exempt).
+    printf '# Overview\n\nThis is a live doc.\n' > "$DOCS_ROOT/docs/live.md"
+
+    # A live doc that declares itself historical in its front matter.
+    printf -- '---\nlast_reviewed: 2026-09-25\nstatus: historical\n---\n\n# Old Design\n' \
+      > "$DOCS_ROOT/docs/historical.md"
+
+    # A doc that only SAYS it is retired, in prose: no declared marker.
+    printf '# Old Design (RETIRED)\n\nSuperseded content.\n' > "$DOCS_ROOT/docs/banner.md"
+
+    # `status: historical` that is not inside a leading front-matter block:
+    # once in the body after the block closes, once with no block at all.
+    printf -- '---\nstatus: reference\n---\n\nstatus: historical\n' > "$DOCS_ROOT/docs/body-marker.md"
+    printf '# Notes\n\nstatus: historical\n' > "$DOCS_ROOT/docs/no-front-matter.md"
+
+    # A doc under docs/adr/ (excluded from scope).
+    printf '# ADR-0099 Some Decision\n\nContext.\n' > "$DOCS_ROOT/docs/adr/ADR-0099-thing.md"
+
+    # A doc under a dated-snapshot excluded dir (docs/audits/).
+    printf '# Audit snapshot\n' > "$DOCS_ROOT/docs/audits/2026-07-01-snapshot.md"
+
+    # A migration-named doc (exempt by filename glob) — put it in scope so its
+    # filename exemption is what matters.
+    printf '# Moving off the old thing\n' > "$DOCS_ROOT/docs/some-migration-notes.md"
+}
+
+# ---- docs_scope_live_files (scope membership) -------------------------------
+
+@test "live doc is included in the live-doc set" {
+    run docs_scope_live_files
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"docs/live.md"* ]]
+}
+
+@test "file in a dated-snapshot excluded dir is NOT in the live set" {
+    run docs_scope_live_files
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"docs/audits/2026-07-01-snapshot.md"* ]]
+}
+
+@test "docs/adr file is NOT in the live set (excluded from scope)" {
+    run docs_scope_live_files
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"docs/adr/ADR-0099-thing.md"* ]]
+}
+
+@test "emitted paths are relative and begin with docs/" {
+    run docs_scope_live_files
+    [ "$status" -eq 0 ]
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        [[ "$line" == docs/* ]]
+    done <<< "$output"
+}
+
+# ---- docs_scope_is_exempt (exemption verdict) -------------------------------
+
+@test "front-matter status: historical is exempt" {
+    run docs_scope_is_exempt "docs/historical.md"
+    [ "$status" -eq 0 ]
+}
+
+@test "a RETIRED prose banner without the front-matter marker is NOT exempt" {
+    run docs_scope_is_exempt "docs/banner.md"
+    [ "$status" -eq 1 ]
+}
+
+@test "status: historical outside a leading front-matter block is NOT exempt" {
+    run docs_scope_is_exempt "docs/body-marker.md"
+    [ "$status" -eq 1 ]
+    run docs_scope_is_exempt "docs/no-front-matter.md"
+    [ "$status" -eq 1 ]
+}
+
+@test "plain live doc is NOT exempt" {
+    run docs_scope_is_exempt "docs/live.md"
+    [ "$status" -eq 1 ]
+}
+
+@test "migration-named doc is exempt by filename glob" {
+    run docs_scope_is_exempt "docs/some-migration-notes.md"
+    [ "$status" -eq 0 ]
+}
+
+# The exemption test also resolves a path directly (already readable) — the
+# check script cd's to the root and passes docs/... paths that resolve as-is.
+@test "exemption resolves a directly-readable path too" {
+    ( cd "$DOCS_ROOT" && docs_scope_is_exempt "docs/historical.md" )
+}

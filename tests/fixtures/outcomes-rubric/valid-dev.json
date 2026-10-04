@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "source_task_id": "task-go-cc-budget",
+  "judge_content_hash": "sha256:REDACTED",
+  "instructions": "Grade whether the refactor keeps every modified function under cyclomatic complexity 25.",
+  "criteria": [
+    {
+      "id": "cc-under-25",
+      "description": "All modified functions have cyclomatic complexity strictly less than 25.",
+      "weight": 1.0
+    },
+    {
+      "id": "no-behavior-change",
+      "description": "The refactor preserves observable behavior (tests unchanged and green).",
+      "weight": 0.5
+    }
+  ]
+}

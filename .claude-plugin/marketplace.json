@@ -1,0 +1,23 @@
+{
+  "name": "agentops-marketplace",
+  "owner": {
+    "name": "Boden Fuller",
+    "email": "fullerbt@users.noreply.github.com"
+  },
+  "metadata": {
+    "description": "Engineering guidance for coding agents: behavior-driven planning, shared domain language, independent validation, and reusable improvements.",
+    "version": "3.9.0"
+  },
+  "plugins": [
+    {
+      "name": "agentops",
+      "description": "Engineering guidance for coding agents: behavior-driven planning, shared domain language, independent validation, and reusable improvements.",
+      "version": "3.9.0",
+      "source": "./",
+      "author": {
+        "name": "Boden Fuller",
+        "email": "fullerbt@users.noreply.github.com"
+      }
+    }
+  ]
+}

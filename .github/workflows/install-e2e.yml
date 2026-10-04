@@ -1,0 +1,85 @@
+# End-to-end install against clean OS containers.
+# Canonical AgentOps 3.3 path: build/install ao + `ao skills link`.
+#
+# Triggered:
+#   - Nightly (UTC 09:30)
+#   - Manual via workflow_dispatch
+#   - PRs that touch install surfaces or this workflow
+
+name: install-e2e
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 9 * * *'
+  pull_request:
+    paths:
+      - 'scripts/install-bd.sh'
+      - 'scripts/refresh-codex-local.sh'
+      - 'scripts/lib/installer-*.sh'
+      - 'tests/install/**'
+      - '.github/workflows/install-e2e.yml'
+      - 'cli/internal/commands/skills/**'
+      - 'cli/cmd/ao/**'
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@REDACTED # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@REDACTED # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: cli/go.sum
+
+      - name: Build ao and link skills into a fresh HOME
+        run: |
+          set -euo pipefail
+          cd cli && go build -o bin/ao ./cmd/ao
+          FRESH_HOME="$(mktemp -d)"
+          HOME="$FRESH_HOME" ./bin/ao skills link
+          test -d "$FRESH_HOME/.agents/skills"
+          count="$(find "$FRESH_HOME/.agents/skills" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
+          echo "linked skill entries: $count"
+          test "$count" -gt 0
+          ./bin/ao version
+
+      - name: Verify install-smoke
+        run: |
+          chmod +x tests/install/test-install-smoke.sh
+          bash tests/install/test-install-smoke.sh
+
+  macos-install:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@REDACTED # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@REDACTED # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: cli/go.sum
+
+      - name: Build ao and link skills into a fresh HOME
+        run: |
+          set -euo pipefail
+          cd cli && go build -o bin/ao ./cmd/ao
+          FRESH_HOME="$(mktemp -d)"
+          HOME="$FRESH_HOME" ./bin/ao skills link
+          test -d "$FRESH_HOME/.agents/skills"
+          count="$(find "$FRESH_HOME/.agents/skills" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
+          echo "linked skill entries: $count"
+          test "$count" -gt 0
+          ./bin/ao version
+
+      - name: Verify install-smoke
+        run: |
+          chmod +x tests/install/test-install-smoke.sh
+          bash tests/install/test-install-smoke.sh

@@ -1,0 +1,303 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Generate cli/docs/COMMANDS.md from ao --help output.
+# Usage:
+#   ./scripts/generate-cli-reference.sh           # Generate COMMANDS.md
+#   ./scripts/generate-cli-reference.sh --check   # Check if committed version is current
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CLI_DIR="$REPO_ROOT/cli"
+OUTPUT="$REPO_ROOT/cli/docs/COMMANDS.md"
+CHECK_MODE=false
+TMPFILE=""
+TMP_AO_DIR=""
+AO_BIN=""
+
+if [[ "${1:-}" == "--check" ]]; then
+  CHECK_MODE=true
+fi
+
+if ! command -v go >/dev/null 2>&1; then
+  echo "ERROR: go is required to generate CLI docs." >&2
+  exit 1
+fi
+
+cleanup() {
+  [[ -n "$TMPFILE" ]] && rm -f "$TMPFILE"
+  [[ -n "$TMP_AO_DIR" ]] && rm -rf "$TMP_AO_DIR"
+}
+trap cleanup EXIT
+
+build_ao() {
+  TMP_AO_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ao-docgen.XXXXXX")"
+  AO_BIN="$TMP_AO_DIR/ao-docgen"
+  (
+    cd "$CLI_DIR"
+    go build -o "$AO_BIN" ./cmd/ao
+  )
+}
+
+# scrub_paths normalizes machine-specific ABSOLUTE paths out of --help captures
+# before they are written into COMMANDS.md. Any command whose --help emits the
+# checkout root ($REPO_ROOT), the user's home ($HOME), or a temp dir ($TMPDIR)
+# would otherwise bake a per-worktree path into the committed doc, making it
+# non-deterministic across checkouts (age-8ais per-commit detached worktrees) and
+# leaving derived.changed-scope unsatisfiable (age-je8h). This is a no-op on clean
+# help output (no such substring to match), so regen stays byte-identical. The
+# durable fix is the class-fix here; the Go help-purity test catches the leak at
+# its source (a command's live --help), not just at the doc. Longest/most-specific
+# path first ($REPO_ROOT is under $HOME in a worktree) so the broader rule can't
+# pre-empt it.
+scrub_paths() {
+  local -a sed_args=()
+  sed_args+=(-e "s#${REPO_ROOT}#<repo>#g")
+  if [[ -n "${HOME:-}" ]]; then
+    sed_args+=(-e "s#${HOME}#<home>#g")
+  fi
+  # $TMPDIR and its macOS-canonicalized twin. macOS EvalSymlinks/realpath resolves the
+  # /var -> /private/var symlink, so a command that canonicalizes its temp path (mktemp -d
+  # then realpath, os.MkdirTemp under a symlinked TMPDIR) emits the /private-prefixed form
+  # (/private/var/folders/...). The raw-$TMPDIR rule alone would leave that half-scrubbed
+  # (/private<tmp>), so scrub the MOST-SPECIFIC (longest) forms FIRST — the realpath-
+  # canonicalized TMPDIR, then the literal /private-prefixed $TMPDIR — before the raw
+  # $TMPDIR, so a broader rule can't pre-empt them. No-op on clean help output. (age-i9ce)
+  local tmp="${TMPDIR:-/tmp}"
+  local tmp_canon=""
+  if command -v realpath >/dev/null 2>&1; then
+    tmp_canon="$(realpath "$tmp" 2>/dev/null || true)"
+  fi
+  if [[ -n "$tmp_canon" && "$tmp_canon" != "$tmp" ]]; then
+    sed_args+=(-e "s#${tmp_canon}[^ ]*#<tmp>#g")
+  fi
+  sed_args+=(-e "s#/private${tmp}[^ ]*#<tmp>#g")
+  sed_args+=(-e "s#${tmp}[^ ]*#<tmp>#g")
+  sed "${sed_args[@]}"
+}
+
+extract_commands() {
+  awk '
+    /^Usage:/ {after_usage=1; next}
+    !after_usage {next}
+
+    /^Flags:/ {exit}
+    /^Global Flags:/ {exit}
+    /^Additional help topics:/ {exit}
+    /^Use "/ {exit}
+
+    /^Available Commands:/ {in_commands=1; next}
+    in_commands && /^$/ {in_commands=0; next}
+    in_commands && NF > 0 {
+      cmd=$1
+      if (!seen[cmd]++) print cmd
+      next
+    }
+
+    /^[[:space:]][[:space:]]+[a-z0-9][a-z0-9-]*([[:space:]]+|$)/ {
+      cmd=$1
+      if (cmd != "ao" && cmd !~ /^-/ && cmd !~ /:$/ && !seen[cmd]++) print cmd
+    }
+  '
+}
+
+extract_usage() {
+  awk '
+    /^Usage:/ {
+      line=$0
+      sub(/^Usage:[[:space:]]*/, "", line)
+      if (line != "") print line
+      in_usage=1
+      next
+    }
+    in_usage {
+      if ($0 ~ /^$/) {
+        in_usage=0
+        next
+      }
+      line=$0
+      sub(/^[[:space:]]+/, "", line)
+      if (line != "") print line
+    }
+  ' | awk '
+    /^ao / {
+      all[++all_n]=$0
+      if ($0 !~ />/) preferred[++pref_n]=$0
+    }
+    END {
+      if (pref_n > 0) print preferred[pref_n]
+      else if (all_n > 0) print all[all_n]
+    }
+  '
+}
+
+extract_flags() {
+  sed -n '/^Flags:/,/^$/{ /^Flags:/d; /^$/d; p; }'
+}
+
+extract_aliases() {
+  sed -n '/^Aliases:/,/^$/{ /^Aliases:/d; /^$/d; p; }'
+}
+
+has_non_help_flags() {
+  grep -Ev '^[[:space:]]*-h,[[:space:]]*--help[[:space:]]+help for' | grep -Ev '^[[:space:]]*$'
+}
+
+first_line() {
+  local text="$1"
+  printf '%s\n' "${text%%$'\n'*}"
+}
+
+heading_for_depth() {
+  local depth="$1"
+  local level=$((depth + 2))
+  local heading=""
+  local i
+
+  if ((level > 6)); then
+    level=6
+  fi
+
+  for ((i = 0; i < level; i++)); do
+    heading+="#"
+  done
+  printf '%s' "$heading"
+}
+
+command_label() {
+  local label="ao"
+  local part
+
+  for part in "$@"; do
+    label+=" $part"
+  done
+
+  printf '%s' "$label"
+}
+
+emit_command_reference() {
+  local depth="$1"
+  shift
+
+  local -a command_path=("$@")
+  local cmd_help
+  cmd_help="$("$AO_BIN" "${command_path[@]}" --help 2>&1 | scrub_paths || true)"
+
+  local description
+  description="$(first_line "$cmd_help")"
+
+  local heading
+  heading="$(heading_for_depth "$depth")"
+
+  local label
+  label="$(command_label "${command_path[@]}")"
+
+  echo "${heading} \`${label}\`"
+  echo ""
+  echo "$description"
+  echo ""
+
+  local usage
+  usage="$(echo "$cmd_help" | extract_usage || true)"
+  if [[ -n "$usage" ]]; then
+    echo '```'
+    echo "$usage"
+    echo '```'
+    echo ""
+  fi
+
+  local aliases
+  aliases="$(echo "$cmd_help" | extract_aliases || true)"
+  if [[ -n "$aliases" ]]; then
+    echo "**Aliases:**"
+    echo ""
+    echo '```'
+    echo "$aliases"
+    echo '```'
+    echo ""
+  fi
+
+  local flags_block
+  flags_block="$(echo "$cmd_help" | extract_flags || true)"
+  if echo "$flags_block" | has_non_help_flags >/dev/null 2>&1; then
+    echo "**Flags:**"
+    echo ""
+    echo '```'
+    echo "$flags_block"
+    echo '```'
+    echo ""
+  fi
+
+  local subcmds
+  subcmds="$(echo "$cmd_help" | extract_commands | grep -v '^$' || true)"
+  if [[ -n "$subcmds" ]]; then
+    if [[ "$depth" -eq 1 ]]; then
+      echo "**Subcommands:**"
+      echo ""
+    fi
+
+    local sub
+    while IFS= read -r sub; do
+      [[ -z "$sub" ]] && continue
+      emit_command_reference "$((depth + 1))" "${command_path[@]}" "$sub"
+    done <<<"$subcmds"
+  fi
+}
+
+generate() {
+  cat <<DOC_HEADER
+# ao CLI Reference
+
+> Auto-generated by \`scripts/generate-cli-reference.sh\`.
+> Do not edit manually. Re-run the script to update.
+
+DOC_HEADER
+
+  local top_help
+  top_help="$("$AO_BIN" --help 2>&1 | scrub_paths)"
+
+  cat <<'DOC_GLOBAL_FLAGS'
+## Global Flags
+
+DOC_GLOBAL_FLAGS
+
+  echo "$top_help" | extract_flags | while IFS= read -r line; do
+    echo "    $line"
+  done
+  echo ""
+
+  local commands
+  commands="$(echo "$top_help" | extract_commands | grep -v '^$')"
+
+  cat <<'DOC_COMMANDS'
+---
+
+## Commands
+
+DOC_COMMANDS
+
+  for cmd in $commands; do
+    emit_command_reference 1 "$cmd"
+    echo "---"
+    echo ""
+  done
+}
+
+build_ao
+
+if $CHECK_MODE; then
+  TMPFILE="$(mktemp)"
+  generate > "$TMPFILE"
+  if diff -q "$OUTPUT" "$TMPFILE" >/dev/null 2>&1; then
+    echo "cli/docs/COMMANDS.md is up to date."
+    exit 0
+  fi
+
+  echo "cli/docs/COMMANDS.md is out of date. Run: ./scripts/generate-cli-reference.sh" >&2
+  diff -u "$OUTPUT" "$TMPFILE" || true
+  exit 1
+fi
+
+mkdir -p "$(dirname "$OUTPUT")"
+generate > "$OUTPUT"
+echo "Generated $OUTPUT"

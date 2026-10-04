@@ -1,0 +1,217 @@
+{
+  "binding_sha256": "sha256:REDACTED",
+  "canonical_skill": {
+    "content_base64": "REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED/REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED+REDACTEDcnM/REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED/REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDYSBsaWZlY3ljbGUgZ2F0ZS4K",
+    "name": "premortem",
+    "path": "skills/premortem/SKILL.md",
+    "sha256": "sha256:REDACTED"
+  },
+  "capture_inputs": [
+    {
+      "content_base64": "REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED=",
+      "path": "probe.json",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "content_base64": "REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED==",
+      "path": "question.md",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "content_base64": "REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED",
+      "path": "discriminator.sh",
+      "sha256": "sha256:REDACTED"
+    }
+  ],
+  "probe": "premortem-plan-shape-t2",
+  "producer_request": {
+    "adapter": "codex",
+    "effort": "xhigh",
+    "identity": {
+      "coverage_eligible": true,
+      "executable_sha256": "sha256:REDACTED",
+      "override": false,
+      "source": "native-codex-path",
+      "version": "codex-cli 0.145.0"
+    },
+    "model": "gpt-5.6-luna"
+  },
+  "prompts": [
+    {
+      "content_base64": "REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED==",
+      "path": "control.prompt",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "content_base64": "REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED/REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED+REDACTEDcnM/REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED/REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDT0sgbWVhbnMgaXQgaXMgbm90Lgo=",
+      "path": "treatment.prompt",
+      "sha256": "sha256:REDACTED"
+    }
+  ],
+  "reps": 2,
+  "schedule": [
+    {
+      "arm": "control",
+      "position": 1,
+      "rep": 1
+    },
+    {
+      "arm": "treatment",
+      "position": 2,
+      "rep": 1
+    },
+    {
+      "arm": "treatment",
+      "position": 3,
+      "rep": 2
+    },
+    {
+      "arm": "control",
+      "position": 4,
+      "rep": 2
+    }
+  ],
+  "schema": "agentops-skill-probe-capture.v3",
+  "scoring": {
+    "discriminator_timeout_seconds": 2,
+    "response_extraction": "codex-jsonl-final-agent-message.v1",
+    "transcript_format": "codex-exec-jsonl.v1"
+  },
+  "seal": {
+    "allowed_read_paths": [
+      "/Users/bo/.local/bin/codex",
+      "/Users/bo/dev/dotfiles/bin/codex"
+    ],
+    "auth_copied": true,
+    "cache_root": "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/C",
+    "config_sanitized": [
+      "model_reasoning_effort",
+      "web_search"
+    ],
+    "config_sha256": "sha256:REDACTED",
+    "config_text": "# Generated for one sealed skill-probe capture. Not the operator's config.\n# Only the keys this harness needs are present: the model comes from the\n# --model flag, and web search is off so the rep has no second egress path.\nmodel_reasoning_effort = \"xhigh\"\nweb_search = \"disabled\"\n",
+    "denied_link_roots": [
+      "/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T",
+      "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T",
+      "/private/tmp",
+      "/tmp",
+      "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/C",
+      "/Users/bo",
+      "/Users/bo/.codex",
+      "/Users/bo/dev/agentops-wt/measure-fix",
+      "/Users/bo/dev/agentops-wt/measure-fix/skills",
+      "/Users/bo/dev/agentops",
+      "/Users/bo/.agents",
+      "/Users/bo/.claude/skills",
+      "/Users/bo/.gemini/skills",
+      "/Users/bo/.codex/skills",
+      "/Users/bo/dev/agentops/skills",
+      "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T/probe-run.4F7rsb/dispatch"
+    ],
+    "denied_read_data_roots": [
+      "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T/probe-run.4F7rsb/dispatch"
+    ],
+    "denied_read_roots": [
+      "/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T",
+      "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T",
+      "/private/tmp",
+      "/tmp",
+      "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/C",
+      "/Users/bo",
+      "/Users/bo/.codex",
+      "/Users/bo/dev/agentops-wt/measure-fix",
+      "/Users/bo/dev/agentops-wt/measure-fix/skills",
+      "/Users/bo/dev/agentops",
+      "/Users/bo/.agents",
+      "/Users/bo/.claude/skills",
+      "/Users/bo/.gemini/skills",
+      "/Users/bo/.codex/skills",
+      "/Users/bo/dev/agentops/skills"
+    ],
+    "dev_write_paths": [
+      "/dev/null",
+      "/dev/zero",
+      "/dev/dtracehelper",
+      "/dev/tty"
+    ],
+    "dispatch_root": "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T/probe-run.4F7rsb/dispatch",
+    "env_allowlist": [
+      "ALL_PROXY",
+      "CODEX_HOME",
+      "HOME",
+      "HTTPS_PROXY",
+      "HTTP_PROXY",
+      "NO_PROXY",
+      "PATH",
+      "PROBE_SEAL",
+      "PROBE_SEAL_PROFILE_FILE",
+      "PWD",
+      "SHLVL",
+      "TERM",
+      "TMPDIR",
+      "_"
+    ],
+    "git_common_root": "/Users/bo/dev/agentops",
+    "launcher_chain": [
+      {
+        "kind": "symlink",
+        "path": "/Users/bo/.local/bin/codex",
+        "target": "/Users/bo/dev/dotfiles/bin/codex"
+      },
+      {
+        "kind": "file",
+        "path": "/Users/bo/dev/dotfiles/bin/codex",
+        "sha256": "sha256:REDACTED"
+      }
+    ],
+    "launcher_invoked": "/Users/bo/.local/bin/codex",
+    "launcher_sha256": "sha256:REDACTED",
+    "mechanism": "sandbox-exec",
+    "mode": "seatbelt",
+    "network": {
+      "hosts": [
+        ".oaiusercontent.com",
+        "ab.chatgpt.com",
+        "api.openai.com",
+        "auth.openai.com",
+        "chatgpt.com"
+      ],
+      "mode": "proxy-allowlist",
+      "ports": [
+        443
+      ],
+      "proxy": "127.0.0.1:58765",
+      "unix_sockets": []
+    },
+    "original_home": "/Users/bo",
+    "platform": "Darwin",
+    "profile_sha256": "sha256:REDACTED",
+    "real_codex_home": "/Users/bo/.codex",
+    "real_tmpdir": "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T",
+    "rep_env": {
+      "CODEX_HOME": "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T/probe-run.4F7rsb/home/.codex",
+      "HOME": "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T/probe-run.4F7rsb/home",
+      "TMPDIR": "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T/probe-run.4F7rsb/tmp"
+    },
+    "repository_root": "/Users/bo/dev/agentops-wt/measure-fix",
+    "run_root": "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T/probe-run.4F7rsb",
+    "sandbox_exec": "/usr/bin/sandbox-exec",
+    "timeout_bin": "/opt/homebrew/bin/timeout",
+    "timeout_seconds": 240,
+    "workspace_root": "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T/probe-run.4F7rsb/ws",
+    "wrap": [
+      "/usr/bin/sandbox-exec",
+      "-p",
+      "sha256:REDACTED",
+      "/opt/homebrew/bin/timeout",
+      "--foreground",
+      "240"
+    ],
+    "writable_roots": [
+      "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T/probe-run.4F7rsb/home",
+      "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T/probe-run.4F7rsb/ws",
+      "/private/var/folders/xl/3tf773396mgbm5yp5g_xr6x00000gn/T/probe-run.4F7rsb/tmp"
+    ]
+  },
+  "treatment_source": "canonical-skill"
+}

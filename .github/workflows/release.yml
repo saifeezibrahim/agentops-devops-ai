@@ -1,0 +1,336 @@
+name: Release Publisher
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v1.0.12)'
+        required: true
+
+concurrency:
+  # Normalize both tag-push and workflow_dispatch reruns onto the same
+  # refs/tags/vX.Y.Z key so a manual rerun cannot publish in parallel with the
+  # original tag-triggered workflow for that same version.
+  # cancel-in-progress: true ensures that a retag (which deletes + repushes the
+  # same tag) does not queue a second redundant run — the newer push cancels any
+  # still-running workflow for the same version key.
+  group: release-${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', startsWith(github.event.inputs.tag, 'v') && github.event.inputs.tag || format('v{0}', github.event.inputs.tag)) || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  doc-release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@REDACTED # v7
+
+      - name: Run doc-release stabilization gate
+        run: |
+          chmod +x tests/docs/validate-doc-release.sh
+          ./tests/docs/validate-doc-release.sh
+
+  pre-publish-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@REDACTED # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@REDACTED # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: cli/go.sum
+
+      - name: Set up Python
+        uses: actions/setup-python@REDACTED # v7.0.0
+        with:
+          python-version: '3.14'
+
+      - name: Install scanner tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          python -m pip install --upgrade pip
+          python -m pip install semgrep==1.169.0 ruff==0.15.21 radon==6.0.1 pytest==9.1.1 \
+            -r evals/skills-rpi/requirements.txt \
+            -r evals/skills-rpi/requirements-readout.txt
+
+          GOBIN=/usr/local/bin go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1
+          GOBIN=/usr/local/bin go install github.com/zricethezav/gitleaks/v8@v8.30.1
+
+          # golangci-lint
+          GOBIN=/usr/local/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1
+
+          # Use the same scanner pins as the nightly full-security lane.
+          # govulncheck covers known-CVE reachability in dependencies and stdlib.
+          GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+
+          # trivy — pinned tag, download-then-execute. Piping a mutable-branch
+          # install script into sh was the semgrep gha-curl-pipe-shell CRITICAL
+          # that blocked the v3.2.0 publisher (supply-chain: a hijacked script
+          # would run unread).
+          curl -sSfL -o /tmp/trivy-install.sh https://raw.githubusercontent.com/aquasecurity/trivy/v0.72.0/contrib/install.sh
+          sh /tmp/trivy-install.sh -b /usr/local/bin v0.72.0
+
+          # hadolint
+          curl -sSfL -o /usr/local/bin/hadolint "https://github.com/hadolint/hadolint/releases/download/v2.14.0/hadolint-Linux-x86_64"
+          chmod +x /usr/local/bin/hadolint
+
+      - name: Generate pre-publish release evidence
+        run: |
+          mkdir -p release-artifacts
+
+          # CycloneDX SBOM for Go module dependencies.
+          GOBIN=/usr/local/bin go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0
+          (cd cli && cyclonedx-gomod mod -licenses -json -output ../release-artifacts/sbom-cyclonedx-go-mod.json)
+
+          # Security is a pre-publish gate. Keep the JSON for release consumers,
+          # but fail before GoReleaser when the gate returns findings.
+          chmod +x scripts/security-gate.sh
+          set +e
+          ./scripts/security-gate.sh --mode full --json --require-tools > release-artifacts/security-gate-summary.json
+          SECURITY_RC=$?
+          set -e
+          jq empty release-artifacts/security-gate-summary.json
+          # The toolchain grades quality-lint findings as WARN_QUALITY — explicitly non-blocking
+          # ("Gate: PASS (quality warnings, non-blocking)" in scripts/toolchain-validate.sh). This
+          # pre-publish SECURITY gate blocks only on actual security findings (BLOCKED_HIGH /
+          # BLOCKED_CRITICAL), so accept pass + warn_quality and print the summary on a real block.
+          GATE_STATUS="$(jq -r '(.gate_status // "") | ascii_downcase' release-artifacts/security-gate-summary.json)"
+          if [[ "$GATE_STATUS" != "pass" && "$GATE_STATUS" != "warn_quality" ]]; then
+            echo "ERROR: pre-publish security gate blocked: gate_status=${GATE_STATUS}"
+            jq . release-artifacts/security-gate-summary.json 2>/dev/null || cat release-artifacts/security-gate-summary.json
+            exit 1
+          fi
+          if [[ "$SECURITY_RC" -ne 0 ]]; then
+            echo "ERROR: pre-publish security gate failed with exit code $SECURITY_RC"
+            exit "$SECURITY_RC"
+          fi
+
+          # Public CI is a VIL lane. Physical HIL remains attached through the
+          # authoritative local release audit because private targets are not
+          # available to the public publisher runner.
+          chmod +x scripts/check-release-readiness.sh
+          scripts/check-release-readiness.sh \
+            --mode official \
+            --artifact-dir release-artifacts \
+            --out release-artifacts/release-readiness.json \
+            --sil pass \
+            --vil pass \
+            --hil-status waived \
+            --hil-waiver "GitHub release publisher cannot access private HIL targets; local release audit remains authoritative for HIL" \
+            --artifacts pass \
+            --security pass \
+            --eval not_applicable
+          jq -e '.release_status == "pass"' release-artifacts/release-readiness.json
+
+      - name: Upload pre-publish release evidence
+        uses: actions/upload-artifact@REDACTED # v7.0.1
+        with:
+          name: pre-publish-release-evidence
+          path: release-artifacts
+          if-no-files-found: error
+
+  publish:
+    needs: [doc-release-gate, pre-publish-evidence]
+    if: needs.doc-release-gate.result == 'success' && needs.pre-publish-evidence.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@REDACTED # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@REDACTED # v7.0.0
+        with:
+          go-version: '1.27.1'
+
+      - name: Set up Python
+        uses: actions/setup-python@REDACTED # v7.0.0
+        with:
+          python-version: '3.14'
+
+      - name: Download pre-publish release evidence
+        uses: actions/download-artifact@REDACTED # v8
+        with:
+          name: pre-publish-release-evidence
+          path: release-artifacts
+
+      - name: Resolve version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            VERSION="$INPUT_TAG"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+
+          if [[ -z "$VERSION" ]]; then
+            echo "ERROR: could not determine release version"
+            exit 1
+          fi
+
+          if [[ "$VERSION" != v* ]]; then
+            VERSION="v$VERSION"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version: $VERSION"
+
+      - name: Verify tag still exists
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git fetch --tags --force
+          if ! git rev-parse "$VERSION^{commit}" > /dev/null 2>&1; then
+            echo "ERROR: Tag $VERSION does not resolve to a commit"
+            exit 1
+          fi
+          COMMIT=$(git rev-parse "$VERSION^{commit}")
+          echo "Tag $VERSION verified (commit: ${COMMIT:0:8})"
+
+      - name: Validate Homebrew token
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          if [[ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]]; then
+            echo "ERROR: HOMEBREW_TAP_GITHUB_TOKEN not set"
+            exit 1
+          fi
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token $HOMEBREW_TAP_GITHUB_TOKEN" \
+            "https://api.github.com/repos/boshu2/homebrew-agentops")
+
+          if [[ "$HTTP_CODE" != "200" ]]; then
+            echo "ERROR: Homebrew token invalid or expired (HTTP $HTTP_CODE)"
+            exit 1
+          fi
+          echo "Homebrew token validated"
+
+      - name: Validate curated release notes (hard gate)
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${VERSION}$" | head -1)
+          chmod +x scripts/validate-release-notes.sh
+          # --since runs the coverage gate: every product area the release actually
+          # touched must be documented (guards against an under-scoped major).
+          scripts/validate-release-notes.sh "$VERSION" --since "$PREV_TAG"
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${VERSION}$" | head -1)
+          chmod +x scripts/extract-release-notes.sh
+          scripts/extract-release-notes.sh "$VERSION" "$PREV_TAG"
+
+      - name: Delete existing release (idempotent re-runs)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if gh release view "$VERSION" > /dev/null 2>&1; then
+            echo "Deleting existing release for $VERSION..."
+            gh release delete "$VERSION" --yes
+            echo "deleted"
+          else
+            echo "No existing release for $VERSION"
+          fi
+
+      - name: Release parity pre-check (inputs, fail-closed)
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          chmod +x scripts/check-release-parity.sh
+          # Input-level check BEFORE anything is published: lints any in-repo
+          # formula against LICENSE and the tag (formula-only mode — no
+          # tarball yet). A divergence here means no release asset and no tap
+          # commit ever exist.
+          scripts/check-release-parity.sh --tag "$VERSION"
+
+      - name: Publish with GoReleaser
+        uses: goreleaser/goreleaser-action@REDACTED # v7
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+      - name: Verify published artifacts (identity-bound parity gate)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          chmod +x scripts/check-release-parity.sh
+          # Identity-bound: download the EXACT assets the release now serves
+          # (not the local dist/ copies) and parity-check those. The checkout
+          # is at the tag, so the working-tree README is the tag README.
+          # GoReleaser wraps flat (wrap_in_directory: false), so README.md
+          # sits at the tarball root. On ANY divergence: delete the release
+          # so no bad asset stays served (the tap formula then points at a
+          # missing asset and brew fails closed on download, not silently).
+          dl="$(mktemp -d)"
+          fail=0
+          for name in ao-darwin-arm64.tar.gz ao-darwin-amd64.tar.gz \
+                      ao-linux-arm64.tar.gz ao-linux-amd64.tar.gz; do
+            echo "== parity (published asset): $name =="
+            # A failed download is itself a divergence (missing/renamed
+            # asset) and must reach the rollback path, not abort under set -e.
+            if ! gh release download "$VERSION" --pattern "$name" --dir "$dl"; then
+              echo "FAIL download: $name missing from release $VERSION" >&2
+              fail=1
+              continue
+            fi
+            scripts/check-release-parity.sh --tarball "$dl/$name" --tag "$VERSION" || fail=1
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "parity divergence in PUBLISHED assets — rolling back release $VERSION" >&2
+            if gh release delete "$VERSION" --yes; then
+              echo "rollback complete: release $VERSION deleted" >&2
+            else
+              echo "ROLLBACK FAILED: release $VERSION is still served and DIVERGENT — delete it manually NOW: gh release delete $VERSION --yes" >&2
+            fi
+            exit 1
+          fi
+
+      - name: Set release notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release edit "$VERSION" --notes-file release-notes.md
+          echo "Release notes applied to $VERSION ($(wc -l < release-notes.md) lines)"
+
+      - name: Upload SBOM, security report, and readiness evidence to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release upload "$VERSION" release-artifacts/sbom-cyclonedx-go-mod.json --clobber
+          gh release upload "$VERSION" release-artifacts/security-gate-summary.json --clobber
+          gh release upload "$VERSION" release-artifacts/release-readiness.json --clobber
+          echo "Uploaded SBOM + security report + readiness assets"
+
+      - name: Generate SLSA provenance attestation
+        uses: actions/attest-build-provenance@REDACTED # v4
+        with:
+          subject-path: |
+            dist/ao-darwin-amd64.tar.gz
+            dist/ao-darwin-arm64.tar.gz
+            dist/ao-linux-amd64.tar.gz
+            dist/ao-linux-arm64.tar.gz
+            dist/ao-windows-amd64.tar.gz
+            dist/ao-windows-arm64.tar.gz
+            dist/checksums.txt
+            release-artifacts/sbom-cyclonedx-go-mod.json
+            release-artifacts/security-gate-summary.json
+            release-artifacts/release-readiness.json

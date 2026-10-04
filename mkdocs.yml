@@ -1,0 +1,211 @@
+site_name: AgentOps
+site_description: Engineering guidance for coding agents — behavior-driven planning, shared domain language, independent validation, and reusable improvements.
+site_url: https://boshu2.github.io/agentops/
+site_author: AgentOps
+
+repo_name: boshu2/agentops
+repo_url: https://github.com/boshu2/agentops
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: _site
+
+# Internal working artifacts (audits, plans, handoffs, research, council logs,
+# operationalized corpora, temp scratch docs) are repo artifacts, not website
+# content — kept tracked in the repo but excluded from the published site so
+# they never enter nav, search, or public URLs. Build machinery under docs/
+# (gen-files scripts in _hooks/, the theme custom_dir overrides/) is excluded
+# too, so it is not copied into the site as raw static files.
+exclude_docs: |
+  _hooks/
+  overrides/
+  audits/
+  brainstorms/
+  code-map/
+  constraints/
+  convergence/
+  council-log/
+  decisions/
+  evals/
+  evidence/
+  handoffs/
+  learnings/
+  migration-trackers/
+  plans/
+  rescope/
+  research/
+  sovereignty-proof/
+  TEMP-*.md
+
+# Keep building even when the knowledge graph links outside docs/ (e.g., ../skills/).
+# Strict link checking runs as a separate CI job via tests/docs/validate-links.sh + lychee.
+strict: false
+
+theme:
+  name: material
+  language: en
+  favicon: assets/favicon.svg
+  logo: assets/logo.svg
+  custom_dir: docs/overrides
+  palette:
+    # Dark mode default (slate) — toggle flips to light.
+    - media: "(prefers-color-scheme)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+  font:
+    text: Inter
+    code: Space Mono
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.tracking
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - content.action.view
+    - content.tabs.link
+    - content.tooltips
+    - toc.follow
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/boshu2/agentops
+      name: AgentOps on GitHub
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      permalink_title: Anchor link
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      use_pygments: true
+      linenums: false
+      anchor_linenums: false
+      pygments_lang_class: true
+      guess_lang: false
+      auto_title: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      check_paths: true
+      base_path:
+        - docs
+        - .
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+  - gen-files:
+      scripts:
+        - docs/_hooks/gen_skill_pages.py
+        - docs/_hooks/gen_cli_reference.py
+  - section-index
+  - include-markdown
+  - git-revision-date-localized:
+      enable_creation_date: false
+      fallback_to_build_date: true
+      strict: false
+      type: date
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - getting-started/index.md
+      - "First-Value Path": first-value-path.md
+      - Newcomer Guide: newcomer-guide.md
+      - FAQ: FAQ.md
+      - Migration Guide: MIGRATION.md
+  - Skills:
+      - Skills Reference: SKILLS.md
+      - Skill Router: SKILL-ROUTER.md
+      - Skill Graph: reference/agentops-skill-graph.md
+      - Skill-System Evolution: reference/skill-system-evolution.md
+  - CLI:
+      - Command Reference: cli/commands.md
+  - Architecture:
+      - architecture/index.md
+      - RPI Traversal: architecture/rpi-traversal.md
+      - Operating Loop (former name): architecture/operating-loop.md
+      - Go CLI Architecture: architecture/go-cli.md
+      - Gas City Reliability: operations/gas-city-reliability.md
+      - How It Works: how-it-works.md
+      - Architecture Overview: ARCHITECTURE.md
+      - Component Map: architecture/component-map.md
+      - Ports and Adapters: architecture/ports-and-adapters.md
+  - Reference:
+      - reference/index.md
+      - Glossary: GLOSSARY.md
+      - Environment Variables: ENV-VARS.md
+      - Schemas: SCHEMAS.md
+      - Testing: TESTING.md
+      - CI/CD: CI-CD.md
+      - Releasing: RELEASING.md
+  - Contracts:
+      - contracts/index.md
+      - Codex Skill API: contracts/codex-skill-api.md
+      - Skill Ports: contracts/skill-ports-and-adapters.md
+      - Optional Dispatch: contracts/orchestration-ports.md
+      - Ubiquitous Language: contracts/ubiquitous-language.md

@@ -1,0 +1,6 @@
+# Skills whose edit helper requires explicit --allow-critical.
+# This is an edit-protection policy, not a keep/disposition inventory.
+implement
+plan
+rpi
+validate

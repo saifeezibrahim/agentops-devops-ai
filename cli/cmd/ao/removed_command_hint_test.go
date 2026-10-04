@@ -1,0 +1,285 @@
+// practices: [ai-assisted-dev, pragmatic-programmer]
+package main
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/spf13/cobra"
+)
+
+// bareRoot returns a root command with no subcommands registered, so every
+// tombstoned verb is genuinely unknown to it (the default-build shape).
+func bareRoot() *cobra.Command {
+	return &cobra.Command{Use: "ao"}
+}
+
+func TestRemovedCommandHint_TombstonedVerbs(t *testing.T) {
+	cases := []struct {
+		verb     string
+		wantFrag []string // every fragment must appear in the hint
+	}{
+		{
+			verb: "pawl",
+			wantFrag: []string{
+				`"pawl" was removed`,
+				"docs/MIGRATION.md",
+				"Validate skill",
+			},
+		},
+		{
+			verb: "land",
+			wantFrag: []string{
+				`"land" was removed`,
+				"docs/MIGRATION.md",
+				"Git or CI",
+			},
+		},
+		{
+			verb: "crank",
+			wantFrag: []string{
+				`"crank" was removed`,
+				"docs/MIGRATION.md",
+				"dispatch_once",
+			},
+		},
+		{
+			verb: "inject",
+			wantFrag: []string{
+				`"inject" was removed`,
+				"docs/MIGRATION.md",
+				"memory or context tooling",
+			},
+		},
+		{
+			verb: "beads",
+			wantFrag: []string{
+				`"beads" was removed`,
+				"docs/MIGRATION.md",
+				"pruned from the default build with no in-ao replacement",
+			},
+		},
+		{
+			verb: "wiki",
+			wantFrag: []string{
+				`"wiki" was removed`,
+				"docs/MIGRATION.md",
+				"pruned from the default build with no in-ao replacement",
+			},
+		},
+		{
+			verb: "sessions",
+			wantFrag: []string{
+				`"sessions" was removed`,
+				"docs/MIGRATION.md",
+				"`ao provenance` records",
+			},
+		},
+		{
+			verb: "eval",
+			wantFrag: []string{
+				`"eval" was removed`,
+				"docs/MIGRATION.md",
+				"repository-selected evaluator",
+			},
+		},
+		{
+			verb: "redact",
+			wantFrag: []string{
+				`"redact" was removed`,
+				"docs/MIGRATION.md",
+				"never existed",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.verb, func(t *testing.T) {
+			err := fmt.Errorf("unknown command %q for %q", tc.verb, "ao")
+			hint := removedCommandHint(bareRoot(), err)
+			if hint == "" {
+				t.Fatalf("removedCommandHint(%q) = empty; want a tombstone hint", tc.verb)
+			}
+			for _, frag := range tc.wantFrag {
+				if !strings.Contains(hint, frag) {
+					t.Errorf("hint for %q missing %q; got:\n%s", tc.verb, frag, hint)
+				}
+			}
+		})
+	}
+}
+
+func TestRemovedCommandHint_NotTombstoned(t *testing.T) {
+	if got := removedCommandHint(bareRoot(), fmt.Errorf("unknown command %q for %q", "frobnicate", "ao")); got != "" {
+		t.Errorf("non-tombstoned verb produced a hint: %q", got)
+	}
+	if got := removedCommandHint(bareRoot(), errors.New("some other failure")); got != "" {
+		t.Errorf("non-unknown-command error produced a hint: %q", got)
+	}
+	if got := removedCommandHint(bareRoot(), nil); got != "" {
+		t.Errorf("nil error produced a hint: %q", got)
+	}
+}
+
+// A registered verb always wins over a tombstone hint.
+func TestRemovedCommandHint_RegisteredVerbSuppressed(t *testing.T) {
+	root := bareRoot()
+	root.AddCommand(&cobra.Command{Use: "pawl"})
+	err := fmt.Errorf("unknown command %q for %q", "pawl", "ao")
+	if got := removedCommandHint(root, err); got != "" {
+		t.Errorf("registered verb produced a tombstone hint: %q", got)
+	}
+}
+
+// Drift gate: every tombstoned verb must have a row (a literal mention) in
+// docs/MIGRATION.md, so the point-of-failure hint and the migration map can
+// never disagree about what was removed.
+func TestRemovedVerbsHaveMigrationRows(t *testing.T) {
+	path := findMigrationDoc(t)
+	raw, err := os.ReadFile(path) // #nosec G304 -- repo-internal doc resolved by walking up from the test cwd
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	doc := string(raw)
+	for verb := range removedCommands {
+		if !strings.Contains(doc, verb) {
+			t.Errorf("tombstoned verb %q has no mention in docs/MIGRATION.md — add a row or drop the tombstone", verb)
+		}
+	}
+}
+
+// TestHintedVerbsAreNotLiveCommands proves no hinted verb resolves to a live
+// registered command (name or alias) on the real root — a hint for a live verb
+// would either be suppressed at runtime (stale map) or, worse, mislabel a
+// usage error as removal. `eval` is the canonical trap in both directions:
+// pruned in 3.2, briefly live in 3.3, and retired again once the whole offline
+// eval surface was found unconsumed — so it must be hinted AND absent from the
+// tree, never one without the other.
+func TestHintedVerbsAreNotLiveCommands(t *testing.T) {
+	for _, verb := range []string{"eval", "redact"} {
+		if _, hinted := removedCommands[verb]; !hinted {
+			t.Errorf("retired verb %q must carry a removal hint", verb)
+		}
+	}
+	live := map[string]string{}
+	for _, c := range rootCmd.Commands() {
+		live[c.Name()] = c.Name()
+		for _, alias := range c.Aliases {
+			live[alias] = c.Name()
+		}
+	}
+	for verb := range removedCommands {
+		if target, ok := live[verb]; ok {
+			t.Errorf("hinted verb %q resolves to live command %q — drop the hint or the command", verb, target)
+		}
+	}
+}
+
+// The root help must never pitch a verb the default build does not serve
+// (the pre-3.0 text sold `ao factory start` while `ao factory` errored).
+func TestRootHelpNamesNoRemovedVerbs(t *testing.T) {
+	help := rootCmd.Short + "\n" + rootCmd.Long
+	for verb := range removedCommands {
+		needle := "ao " + verb
+		if strings.Contains(help, needle) {
+			t.Errorf("root help still pitches removed verb %q — a dev following --help hits an unknown-command error", needle)
+		}
+	}
+}
+
+// TestRemovedVerbsStayHinted pins the verbs whose removal hint must never be
+// dropped. The other tombstone tests iterate removedCommands itself, so only
+// a fixed list can notice an entry disappearing from the map.
+func TestRemovedVerbsStayHinted(t *testing.T) {
+	for _, verb := range []string{
+		"pawl", "plan-pawl", "land", "done", "close", "governor", "yield",
+		"claim", "next-work", "state", "worktree", "validate", "converge",
+		"reconcile", "membrane", "crank", "flywheel",
+	} {
+		err := fmt.Errorf("unknown command %q for %q", verb, "ao")
+		hint := removedCommandHint(bareRoot(), err)
+		if want := fmt.Sprintf("%q was removed", verb); !strings.Contains(hint, want) {
+			t.Errorf("ao %s hint = %q; want it to contain %q", verb, hint, want)
+		}
+	}
+}
+
+// TestRemovedCommandHintsNameLiveSkills proves each hint that sends the user
+// to a skill names one that ships: a hint pointing at a retired skill (the
+// flywheel hint once named "the learn skill") strands the user.
+func TestRemovedCommandHintsNameLiveSkills(t *testing.T) {
+	repo := filepath.Dir(filepath.Dir(findMigrationDoc(t)))
+	for verb, skill := range map[string]string{
+		"plan-pawl": "premortem",
+		"pawl":      "validate",
+		"validate":  "validate",
+		"verify":    "validate",
+		"flywheel":  "memory",
+	} {
+		tomb, ok := removedCommands[verb]
+		if !ok {
+			t.Errorf("%q lost its tombstone", verb)
+			continue
+		}
+		if !strings.Contains(strings.ToLower(tomb.use), skill) {
+			t.Errorf("%q hint %q does not name the %s skill", verb, tomb.use, skill)
+		}
+		if _, err := os.Stat(filepath.Join(repo, "skills", skill, "SKILL.md")); err != nil {
+			t.Errorf("%q hint names skill %q, which does not ship: %v", verb, skill, err)
+		}
+	}
+	// Any other hint that points at a skill ("the X skill", "invoke the X
+	// skill", "invoke x") must point at one that ships, including hints for
+	// retired subcommands. A possessive ("the compile skill's") describes
+	// history, not a destination, and is skipped.
+	hints := map[string]string{}
+	for verb, tomb := range removedCommands {
+		hints[verb] = tomb.use
+	}
+	for parent, children := range removedChildCommands {
+		for child, tomb := range children {
+			hints[parent+" "+child] = tomb.use
+		}
+	}
+	for verb, use := range hints {
+		for _, m := range skillMention.FindAllStringSubmatch(use, -1) {
+			name := strings.ToLower(m[1] + m[2])
+			if name == "the" { // "invoke the <non-skill>": not a skill reference
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(repo, "skills", name, "SKILL.md")); err != nil {
+				t.Errorf("%q hint points at skill %q, which does not ship", verb, name)
+			}
+		}
+	}
+}
+
+// skillMention matches "[invoke ]the <Name> skill" (not possessive) or "invoke <name>".
+var skillMention = regexp.MustCompile(`\b(?:invoke )?the ([A-Za-z-]+) skill\b(?:[^'\w]|$)|\binvoke ([a-z][a-z-]+)\b`)
+
+// findMigrationDoc walks up from the test's working directory to the repo
+// root and returns the path to docs/MIGRATION.md.
+func findMigrationDoc(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for i := 0; i < 8; i++ {
+		candidate := filepath.Join(dir, "docs", "MIGRATION.md")
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	t.Fatal("docs/MIGRATION.md not found walking up from test cwd")
+	return ""
+}

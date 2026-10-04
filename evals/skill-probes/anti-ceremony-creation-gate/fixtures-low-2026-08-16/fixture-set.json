@@ -1,0 +1,61 @@
+{
+  "binding_sha256": "sha256:REDACTED",
+  "capture_evaluator": {
+    "harness": {
+      "path": "scripts/probe-skill.sh",
+      "sha256": "sha256:REDACTED"
+    },
+    "metadata_helper": {
+      "path": "scripts/lib/probe-fixture-metadata.py",
+      "sha256": "sha256:REDACTED"
+    }
+  },
+  "evaluation_inputs": [
+    {
+      "path": "probe.json",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "path": "question.md",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "path": "treatment-prelude.md",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "path": "discriminator.sh",
+      "sha256": "sha256:REDACTED"
+    }
+  ],
+  "probe": "anti-ceremony-creation-gate",
+  "producer": {
+    "adapter": "codex",
+    "effort": "low",
+    "model": "gpt-5.6-luna"
+  },
+  "reps": 2,
+  "requested_producer": {
+    "effort": "low",
+    "model": "gpt-5.6-luna"
+  },
+  "schema": "REDACTED.v1",
+  "transcripts": [
+    {
+      "path": "control-1.txt",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "path": "treatment-1.txt",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "path": "control-2.txt",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "path": "treatment-2.txt",
+      "sha256": "sha256:REDACTED"
+    }
+  ]
+}

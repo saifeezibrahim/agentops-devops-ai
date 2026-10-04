@@ -1,0 +1,35 @@
+# .scenario-linkage-allow — feature files intentionally documentation-only.
+#
+# Each line is a repo-relative path to a .feature file whose scenarios are NOT
+# yet linked to executing tests via @covered-by: tags. The scenario→test
+# linkage gate (scripts/check-scenario-test-linkage.sh) skips scenarios in
+# these files. The gate is real: any scenario NOT here and NOT @covered-by-
+# tagged fails CI.
+#
+# Tracking: soc-63xfx seeded this allowlist with the corpus that existed when
+# the gate landed (3 of 71 feature files have executing tests: rpi, goals,
+# scenario). The standing goal is to DRAIN this list — as a skill gains an
+# executing test, tag its scenarios with @covered-by: and remove the file here.
+# Do NOT add new feature files to this allowlist without a tracking bead; new
+# specs should ship with their covering test.
+#
+# A file may NOT be both allowlisted AND carry @covered-by: tags (ambiguous
+# intent) — the gate rejects that. To link a file, delete its line below.
+#
+# Lines starting with '#' and blank lines are ignored. Trailing '# comment' on
+# an entry is stripped.
+skills/doc/references/doc.feature
+skills/doc/references/oss-docs.feature
+skills/doc/references/readme.feature
+skills/postmortem/references/postmortem.feature
+skills/memory/references/learn/learn.feature
+skills/premortem/references/premortem.feature
+skills/refactor/references/refactor.feature
+skills/reverse-engineer/references/reverse-engineer.feature
+skills/implement/references/scaffold/scaffold.feature
+skills/security/references/security-suite.feature
+skills/security/references/security.feature
+skills/skill-builder/references/heal.feature
+skills/skill-builder/references/skill-auditor.feature
+skills/skill-builder/references/skill-builder.feature
+skills/test/references/test.feature

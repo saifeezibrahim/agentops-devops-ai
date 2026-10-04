@@ -1,0 +1,18 @@
+# scripts/.atomic-write-grandfather — FILENAME-pinned grandfather list.
+#
+# Every cli/**/*.go file (outside cli/internal/storage/, excluding _test.go)
+# that currently has BOTH a non-comment os.Rename( invocation AND a
+# non-comment temp-file signal (os.CreateTemp( or ".tmp literal) — the
+# hand-rolled atomic-write shape. These predate the ratchet
+# (age-ratchet-lib-extraction-bv7d.9) and are exempt from the FILE-level
+# trip; a NEW os.Rename( hunk still trips even in a grandfathered file.
+# The list only SHRINKS: a file that no longer trips must be pruned.
+#
+# Blessed replacement: storage.AtomicWriteFile (temp, fsync, rename,
+# fsync-dir) / storage.FsyncDir for sanctioned own-rename movers.
+#
+# Regenerate with:  bash scripts/check-atomic-write-ratchet.sh --regenerate
+# (regenerate at LAND time, after the final rebase; hand-audit the list.)
+cli/internal/doctor/runartifact.go
+cli/internal/evalsubstrate/atomic.go
+cli/internal/scenarioresults/writer.go

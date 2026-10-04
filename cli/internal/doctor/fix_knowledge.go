@@ -1,0 +1,927 @@
+package doctor
+
+// Knowledge subsystem detectors and fixers.
+//
+// This file implements the six knowledge failure modes from the Phase 2
+// analysis. Four are auto-fixable, two are detect-only:
+//
+//	fm-knowledge-corrupt-index-lines        (auto) — drop malformed search-index lines
+//	fm-knowledge-torn-append-line           (auto) — drop a torn trailing index line
+//	fm-knowledge-orphaned-flywheel-learnings(auto) — consolidate split learnings dirs
+//	fm-knowledge-stale-index-drift          (detect-only) — index drifted from artifacts
+//	fm-knowledge-false-freshness            (detect-only) — freshness from FS modtime
+//
+// Detectors are PURE: they only stat and read. Every fixer disk write flows
+// through Mutate — there is no os.WriteFile/os.Remove/os.Rename/os.Create in
+// this file. There is no Mkdir op in the canonical seven-op enum; the
+// missing-substructure fixer therefore creates a directory by staging a
+// `.gitkeep` placeholder inside the run's quarantine and renaming it into the
+// target path via Op Rename, whose executeAtomic MkdirAll's the parent. That
+// keeps directory creation routed through the single chokepoint.
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+// Time-window constants for freshness analysis.
+const (
+	hour = time.Hour
+	day  = 24 * time.Hour
+)
+
+// nowProvider returns the current time. It is a package var so tests can pin a
+// deterministic clock for the false-freshness detector.
+var nowProvider = time.Now
+
+// absDuration returns the absolute value of a duration.
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
+}
+
+// parseIndexTime parses an index timestamp, accepting RFC3339 and RFC3339Nano.
+func parseIndexTime(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, fmt.Errorf("empty timestamp")
+	}
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, s)
+}
+
+// freshnessSignals computes the two competing freshness signals for a sessions
+// directory: fsNewest (max file modtime) and contentNewest (max parsed
+// Session.Date across session JSONL files). parsedAny reports whether at least
+// one session `date` field was parsed. It is pure: stat + read only.
+func freshnessSignals(sessionsDir string, entries []os.DirEntry) (fsNewest, contentNewest time.Time, parsedAny bool) {
+	for _, e := range entries {
+		// File-level symlink gate: only REAL regular files contribute to either
+		// freshness signal. os.ReadFile below follows a symlinked session JSONL
+		// to a target outside the repository, and a symlink's own lstat mtime is
+		// a meaningless freshness signal — skip both.
+		if !e.Type().IsRegular() {
+			continue
+		}
+		if info, err := e.Info(); err == nil && info.ModTime().After(fsNewest) {
+			fsNewest = info.ModTime()
+		}
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(sessionsDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, t := range splitNonEmptyLines(raw) {
+			var obj struct {
+				Date string `json:"date"`
+			}
+			if json.Unmarshal([]byte(t), &obj) != nil || obj.Date == "" {
+				continue
+			}
+			if d, derr := parseIndexTime(obj.Date); derr == nil {
+				parsedAny = true
+				if d.After(contentNewest) {
+					contentNewest = d
+				}
+			}
+		}
+	}
+	return fsNewest, contentNewest, parsedAny
+}
+
+// knowledgeBaseDir returns the structured knowledge-store base, <cwd>/.agents/ao.
+func knowledgeBaseDir(env *DetectEnv) string {
+	return filepath.Join(env.CWD, ".agents", "ao")
+}
+
+// searchIndexPath returns the search-index JSONL path under the knowledge store.
+func searchIndexPath(env *DetectEnv) string {
+	return filepath.Join(knowledgeBaseDir(env), "index", "search-index.jsonl")
+}
+
+// ---------------------------------------------------------------------------
+// Symlinked-root guards (shared by the knowledge, bridges, and skills
+// subsystems; the workspace subsystem carries the originals in
+// fix_workspace.go).
+//
+// Stat/ReadDir/ReadFile follow symlinks and Mutate's EnsureInScope check is
+// LEXICAL (no EvalSymlinks), so a detector or fixer that resolves a
+// repo-relative root which is actually a symlink would read — and then
+// mutate — a tree OUTSIDE the repository while every scope check passes.
+// Every detector that consumes such a root must gate on realChainUnder
+// (unsafe root → zero findings); every fixer must gate on
+// requireRealChainUnder (unsafe root → refused_unsafe; absent root → the
+// fixer's existing no-op/refusal contract).
+// ---------------------------------------------------------------------------
+
+// realChainUnder is the detector-side guard: walking root/parts[0],
+// root/parts[0]/parts[1], ..., every component that EXISTS must be a real
+// (non-symlink) directory. The walk is safe to stop at the first absent
+// component — nothing deeper can resolve through it — and a component that
+// exists as a non-directory (symlink, regular file, ...) makes the chain
+// unsafe to consume.
+func realChainUnder(root string, parts ...string) bool {
+	p := root
+	for _, part := range parts {
+		p = filepath.Join(p, part)
+		if _, err := os.Lstat(p); err != nil {
+			return os.IsNotExist(err)
+		}
+		if !workspaceRealDir(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// requireRealChainUnder is the fixer-side counterpart of realChainUnder,
+// built on workspaceRequireRealAgentsDir per component: a chain whose first
+// absent component ends the walk reports (false, nil) — nothing to fix — while
+// any component that exists but is not a real directory refuses with a
+// refused_unsafe error so no fixer ever mutates through it.
+func requireRealChainUnder(root string, parts ...string) (exists bool, err error) {
+	p := root
+	for _, part := range parts {
+		p = filepath.Join(p, part)
+		ex, rerr := workspaceRequireRealAgentsDir(p)
+		if rerr != nil {
+			return false, rerr
+		}
+		if !ex {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// realRegularFile Lstats path and reports whether it is a REAL regular file —
+// present and not a symlink (even a symlink to a regular file). Fixers that
+// WriteFile through a repo-relative path must gate on this: os.WriteFile (and
+// Mutate's WriteFile op) follows a symlinked destination and would overwrite
+// the external target.
+func realRegularFile(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+// requireRealIndexFile is the fixer-side guard for the search-index path: the
+// .agents/ao/index chain must contain no symlink, and the index file — when it
+// exists — must be a real regular file. An absent chain or absent index
+// returns nil so the caller's existing read-error contract still applies.
+func requireRealIndexFile(env *DetectEnv, idx, fixerID string) error {
+	if _, gerr := requireRealChainUnder(env.CWD, ".agents", "ao", "index"); gerr != nil {
+		return fmt.Errorf("doctor: %s: %w", fixerID, gerr)
+	}
+	if info, lerr := os.Lstat(idx); lerr == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("doctor: %s: %s is not a real regular file (refused_unsafe)", fixerID, idx)
+	}
+	return nil
+}
+
+// realRepoFile reports whether file — an absolute path expected to sit under
+// root — resolves through no symlink at all: file is lexically inside root,
+// every directory between root and the file is a real directory, and the file
+// itself is a regular file.
+func realRepoFile(root, file string) bool {
+	rel, err := filepath.Rel(root, file)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	if len(parts) > 1 && !realChainUnder(root, parts[:len(parts)-1]...) {
+		return false
+	}
+	return realRegularFile(file)
+}
+
+// indexableExts is the artifact file extension set the search index mirrors.
+var indexableExts = map[string]bool{".md": true, ".jsonl": true}
+
+// artifactSubdirs is the set of .agents subdirectories whose artifacts the
+// search index is expected to mirror.
+var artifactSubdirs = []string{"learnings", "patterns", "research", "retros", "candidates"}
+
+// init registers all six knowledge detectors and four knowledge fixers.
+func init() {
+	RegisterDetector(corruptIndexLinesDetector{})
+	RegisterDetector(tornAppendLineDetector{})
+	RegisterDetector(orphanedFlywheelLearningsDetector{})
+	RegisterDetector(staleIndexDriftDetector{})
+	RegisterDetector(falseFreshnessDetector{})
+
+	RegisterFixer(corruptIndexLinesFixer{})
+	RegisterFixer(tornAppendLineFixer{})
+	RegisterFixer(orphanedFlywheelLearningsFixer{})
+	RegisterFixer(staleIndexDriftFixer{})
+	RegisterFixer(falseFreshnessFixer{})
+}
+
+// ---------------------------------------------------------------------------
+// Shared JSONL helpers (pure).
+// ---------------------------------------------------------------------------
+
+// indexLineValid reports whether a trimmed JSONL line parses as a search-index
+// entry: valid JSON with a non-empty string `path` field. Blank input is not
+// valid (callers skip blank lines before calling this).
+func indexLineValid(trimmed string) bool {
+	if trimmed == "" {
+		return false
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &obj); err != nil {
+		return false
+	}
+	raw, ok := obj["path"]
+	if !ok {
+		return false
+	}
+	var p string
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return false
+	}
+	return p != ""
+}
+
+// splitNonEmptyLines splits raw file bytes on newline, trimming each line and
+// dropping empty results. Order is preserved.
+func splitNonEmptyLines(raw []byte) []string {
+	var out []string
+	for _, ln := range strings.Split(string(raw), "\n") {
+		t := strings.TrimSpace(ln)
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// FM: fm-knowledge-corrupt-index-lines (auto-fixable)
+// ---------------------------------------------------------------------------
+
+// corruptIndexLinesDetector flags non-JSON or schema-invalid lines anywhere in
+// the search-index JSONL file.
+type corruptIndexLinesDetector struct{}
+
+func (corruptIndexLinesDetector) ID() string           { return "fm-knowledge-corrupt-index-lines" }
+func (corruptIndexLinesDetector) Subsystem() string    { return "knowledge" }
+func (corruptIndexLinesDetector) Severity() string     { return "P2" }
+func (corruptIndexLinesDetector) EstimatedCostMS() int { return 5 }
+func (corruptIndexLinesDetector) OnlineRequired() bool { return false }
+func (corruptIndexLinesDetector) QuickPath() bool      { return false }
+func (corruptIndexLinesDetector) Describe() string {
+	return "search-index.jsonl contains malformed lines real readers silently skip"
+}
+
+// corruptIndexLineNos returns the 1-based line numbers of corrupt entries in
+// the index, splitting raw bytes on newline so blank lines are tolerated.
+func corruptIndexLineNos(raw []byte) []int {
+	var bad []int
+	for i, ln := range strings.Split(string(raw), "\n") {
+		t := strings.TrimSpace(ln)
+		if t == "" {
+			continue
+		}
+		if !indexLineValid(t) {
+			bad = append(bad, i+1)
+		}
+	}
+	return bad
+}
+
+func (d corruptIndexLinesDetector) Detect(env *DetectEnv) ([]Finding, error) {
+	idx := searchIndexPath(env)
+	if !realChainUnder(env.CWD, ".agents", "ao", "index") || !realRepoFile(env.CWD, idx) {
+		return nil, nil // symlinked root or index: unsafe to consume
+	}
+	info, err := os.Stat(idx)
+	if err != nil || info.Size() == 0 {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(idx)
+	if err != nil {
+		return nil, fmt.Errorf("doctor: read search index: %w", err)
+	}
+	bad := corruptIndexLineNos(raw)
+	if len(bad) == 0 {
+		return nil, nil
+	}
+	return []Finding{{
+		ID:         d.ID(),
+		Severity:   d.Severity(),
+		Subsystem:  d.Subsystem(),
+		Title:      fmt.Sprintf("%d corrupt search-index line(s)", len(bad)),
+		Confidence: 1.0,
+		Evidence: Evidence{
+			File:  ".agents/ao/index/search-index.jsonl",
+			Lines: bad,
+			Query: "compare wc -l vs ao index stats total_entries",
+		},
+		Remediation: Remediation{
+			Command:          "ao doctor --fix --only " + d.ID(),
+			ExplainCommand:   "ao doctor explain " + d.ID(),
+			AutoFixable:      true,
+			EstimatedActions: 1,
+		},
+	}}, nil
+}
+
+// corruptIndexLinesFixer rewrites search-index.jsonl keeping only valid entries.
+// The whole original file is backed up by Mutate before the WriteFile overwrite.
+type corruptIndexLinesFixer struct{}
+
+func (corruptIndexLinesFixer) ID() string { return "fm-knowledge-corrupt-index-lines" }
+func (corruptIndexLinesFixer) Preconditions() []string {
+	return []string{
+		".agents/ao/index/search-index.jsonl exists and is non-empty",
+		"at least one line parses as a valid SearchIndexEntry",
+	}
+}
+func (corruptIndexLinesFixer) WritesTo() []string {
+	return []string{".agents/ao/index/search-index.jsonl"}
+}
+func (corruptIndexLinesFixer) Ops() []string     { return []string{"WriteFile"} }
+func (corruptIndexLinesFixer) Reversible() bool  { return true }
+func (corruptIndexLinesFixer) Idempotent() bool  { return true }
+func (corruptIndexLinesFixer) AutoFixable() bool { return true }
+
+func (f corruptIndexLinesFixer) Fix(ctx *MutateContext, env *DetectEnv, _ []Finding) (FixResult, error) {
+	res := FixResult{FixerID: f.ID(), FindingIDs: []string{f.ID()}}
+	idx := searchIndexPath(env)
+	if gerr := requireRealIndexFile(env, idx, f.ID()); gerr != nil {
+		res.Err = gerr
+		return res, res.Err
+	}
+	raw, err := os.ReadFile(idx)
+	if err != nil {
+		res.Err = fmt.Errorf("doctor: %s: read index: %w", f.ID(), err)
+		return res, res.Err
+	}
+	var kept []string
+	dropped := 0
+	for _, t := range splitNonEmptyLines(raw) {
+		if indexLineValid(t) {
+			kept = append(kept, t)
+		} else {
+			dropped++
+		}
+	}
+	if dropped == 0 {
+		res.Fixed = true
+		return res, nil
+	}
+	if len(kept) == 0 {
+		res.Err = fmt.Errorf("doctor: %s: every line corrupt; quarantine or delete the legacy index file manually (refused_unsafe)", f.ID())
+		return res, res.Err
+	}
+	desired := []byte(strings.Join(kept, "\n") + "\n")
+	r, err := Mutate(ctx, idx, WriteFile{Content: desired, Mode: 0o600})
+	if err != nil {
+		res.Err = fmt.Errorf("doctor: %s: rewrite index: %w", f.ID(), err)
+		return res, res.Err
+	}
+	if r.OK {
+		res.ActionsTaken = 1
+	}
+	res.Fixed = true
+	return res, nil
+}
+
+// ---------------------------------------------------------------------------
+// FM: fm-knowledge-torn-append-line (auto-fixable)
+// ---------------------------------------------------------------------------
+
+// tornAppendLineDetector flags an interrupted O_APPEND write to the search
+// index: a final line that fails to parse AND is not newline-terminated.
+type tornAppendLineDetector struct{}
+
+func (tornAppendLineDetector) ID() string           { return "fm-knowledge-torn-append-line" }
+func (tornAppendLineDetector) Subsystem() string    { return "knowledge" }
+func (tornAppendLineDetector) Severity() string     { return "P2" }
+func (tornAppendLineDetector) EstimatedCostMS() int { return 3 }
+func (tornAppendLineDetector) OnlineRequired() bool { return false }
+func (tornAppendLineDetector) QuickPath() bool      { return false }
+func (tornAppendLineDetector) Describe() string {
+	return "search-index.jsonl has a torn trailing line from an interrupted append"
+}
+
+// indexTorn reports whether raw bytes end in a torn trailing line: the final
+// non-empty line fails to parse and there is no terminating newline.
+func indexTorn(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	if bytes.HasSuffix(raw, []byte("\n")) {
+		return false
+	}
+	lines := splitNonEmptyLines(raw)
+	if len(lines) == 0 {
+		return false
+	}
+	return !indexLineValid(lines[len(lines)-1])
+}
+
+func (d tornAppendLineDetector) Detect(env *DetectEnv) ([]Finding, error) {
+	idx := searchIndexPath(env)
+	if !realChainUnder(env.CWD, ".agents", "ao", "index") || !realRepoFile(env.CWD, idx) {
+		return nil, nil // symlinked root or index: unsafe to consume
+	}
+	info, err := os.Stat(idx)
+	if err != nil || info.Size() == 0 {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(idx)
+	if err != nil {
+		return nil, fmt.Errorf("doctor: read search index: %w", err)
+	}
+	if !indexTorn(raw) {
+		return nil, nil
+	}
+	lines := splitNonEmptyLines(raw)
+	return []Finding{{
+		ID:         d.ID(),
+		Severity:   d.Severity(),
+		Subsystem:  d.Subsystem(),
+		Title:      fmt.Sprintf("torn trailing index line (%d bytes, no terminating newline)", len(lines[len(lines)-1])),
+		Confidence: 1.0,
+		Evidence: Evidence{
+			File:  ".agents/ao/index/search-index.jsonl",
+			Lines: []int{len(lines)},
+			Query: "tail -c 200 search-index.jsonl | tail -1 | json.loads -> non-zero exit",
+		},
+		Remediation: Remediation{
+			Command:          "ao doctor --fix --only " + d.ID(),
+			ExplainCommand:   "ao doctor explain " + d.ID(),
+			AutoFixable:      true,
+			EstimatedActions: 1,
+		},
+	}}, nil
+}
+
+// tornAppendLineFixer drops the torn trailing line and rewrites the index with
+// a clean terminating newline. It refuses if a non-trailing line is also
+// corrupt — that is corruptIndexLinesFixer's job, and the engine topo-sorts
+// corrupt-index-lines before torn-append-line.
+type tornAppendLineFixer struct{}
+
+func (tornAppendLineFixer) ID() string { return "fm-knowledge-torn-append-line" }
+func (tornAppendLineFixer) Preconditions() []string {
+	return []string{
+		".agents/ao/index/search-index.jsonl exists and is non-empty",
+		"only the trailing line is torn; no non-trailing line is corrupt",
+	}
+}
+func (tornAppendLineFixer) WritesTo() []string {
+	return []string{".agents/ao/index/search-index.jsonl"}
+}
+func (tornAppendLineFixer) Ops() []string     { return []string{"WriteFile"} }
+func (tornAppendLineFixer) Reversible() bool  { return true }
+func (tornAppendLineFixer) Idempotent() bool  { return true }
+func (tornAppendLineFixer) AutoFixable() bool { return true }
+
+func (f tornAppendLineFixer) Fix(ctx *MutateContext, env *DetectEnv, _ []Finding) (FixResult, error) {
+	res := FixResult{FixerID: f.ID(), FindingIDs: []string{f.ID()}}
+	idx := searchIndexPath(env)
+	if gerr := requireRealIndexFile(env, idx, f.ID()); gerr != nil {
+		res.Err = gerr
+		return res, res.Err
+	}
+	raw, err := os.ReadFile(idx)
+	if err != nil {
+		res.Err = fmt.Errorf("doctor: %s: read index: %w", f.ID(), err)
+		return res, res.Err
+	}
+	endsWithNewline := bytes.HasSuffix(raw, []byte("\n"))
+	lines := splitNonEmptyLines(raw)
+	var kept []string
+	for i, t := range lines {
+		isLast := i == len(lines)-1
+		switch {
+		case indexLineValid(t):
+			kept = append(kept, t)
+		case isLast && !endsWithNewline:
+			// the torn trailing line — drop it
+		default:
+			res.Err = fmt.Errorf("doctor: %s: non-trailing corruption present; run fm-knowledge-corrupt-index-lines first (refused_unsafe)", f.ID())
+			return res, res.Err
+		}
+	}
+	desired := []byte(strings.Join(kept, "\n") + "\n")
+	if bytes.Equal(desired, raw) {
+		res.Fixed = true
+		return res, nil
+	}
+	r, err := Mutate(ctx, idx, WriteFile{Content: desired, Mode: 0o600})
+	if err != nil {
+		res.Err = fmt.Errorf("doctor: %s: rewrite index: %w", f.ID(), err)
+		return res, res.Err
+	}
+	if r.OK {
+		res.ActionsTaken = 1
+	}
+	res.Fixed = true
+	return res, nil
+}
+
+// ---------------------------------------------------------------------------
+// FM: fm-knowledge-orphaned-flywheel-learnings (auto-fixable)
+// ---------------------------------------------------------------------------
+
+// orphanedFlywheelLearningsDetector flags learnings split across the canonical
+// .agents/ao/learnings and the fallback .agents/learnings — a dual-location
+// ambiguity that makes learnings counts internally inconsistent. The id keeps
+// its historical "flywheel" spelling as a stable operator selector for
+// flywheel-era debris.
+type orphanedFlywheelLearningsDetector struct{}
+
+func (orphanedFlywheelLearningsDetector) ID() string {
+	return "fm-knowledge-orphaned-flywheel-learnings"
+}
+func (orphanedFlywheelLearningsDetector) Subsystem() string    { return "knowledge" }
+func (orphanedFlywheelLearningsDetector) Severity() string     { return "P3" }
+func (orphanedFlywheelLearningsDetector) EstimatedCostMS() int { return 3 }
+func (orphanedFlywheelLearningsDetector) OnlineRequired() bool { return false }
+func (orphanedFlywheelLearningsDetector) QuickPath() bool      { return false }
+func (orphanedFlywheelLearningsDetector) Describe() string {
+	return "flywheel learnings split across .agents/learnings and .agents/ao/learnings"
+}
+
+// listLearningFiles returns the basenames of *.md and *.jsonl REAL regular
+// files directly inside dir, sorted. Symlinked entries are excluded at the
+// file level (left in place, never swept): Mutate's before-read and backup
+// FOLLOW a symlinked source, so passing one to Mutate would copy external
+// bytes into the run backup and then rename the link. A missing directory
+// yields an empty slice.
+func listLearningFiles(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue // dirs and symlinks are never part of the sweep
+		}
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if indexableExts[ext] {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// countSymlinkedLearningFiles returns how many learning-named (*.md/*.jsonl)
+// entries directly inside dir are symlinks — the files listLearningFiles
+// deliberately excludes from the sweep. Surfaced in the orphaned-learnings
+// finding Evidence so the exclusion is visible, not silent.
+func countSymlinkedLearningFiles(dir string) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if e.Type()&os.ModeSymlink == 0 {
+			continue
+		}
+		if indexableExts[strings.ToLower(filepath.Ext(e.Name()))] {
+			n++
+		}
+	}
+	return n
+}
+
+// flywheelLearningsDirs returns the canonical (primary) and fallback learnings
+// directory paths for the workspace.
+func flywheelLearningsDirs(env *DetectEnv) (primary, fallback string) {
+	primary = filepath.Join(knowledgeBaseDir(env), "learnings")
+	fallback = filepath.Join(env.CWD, ".agents", "learnings")
+	return primary, fallback
+}
+
+func (d orphanedFlywheelLearningsDetector) Detect(env *DetectEnv) ([]Finding, error) {
+	if !realChainUnder(env.CWD, ".agents", "ao", "learnings") ||
+		!realChainUnder(env.CWD, ".agents", "learnings") {
+		return nil, nil // symlinked root: unsafe to consume
+	}
+	primary, fallback := flywheelLearningsDirs(env)
+	primaryFiles := listLearningFiles(primary)
+	fallbackFiles := listLearningFiles(fallback)
+	if len(primaryFiles) == 0 || len(fallbackFiles) == 0 {
+		return nil, nil
+	}
+	query := "ls .agents/learnings .agents/ao/learnings - both non-empty"
+	if excluded := countSymlinkedLearningFiles(primary) + countSymlinkedLearningFiles(fallback); excluded > 0 {
+		query += fmt.Sprintf("; %d symlinked learning file(s) excluded from the sweep", excluded)
+	}
+	return []Finding{{
+		ID:         d.ID(),
+		Severity:   d.Severity(),
+		Subsystem:  d.Subsystem(),
+		Title:      fmt.Sprintf("learnings split: %d in .agents/learnings, %d in .agents/ao/learnings", len(fallbackFiles), len(primaryFiles)),
+		Confidence: 1.0,
+		Evidence: Evidence{
+			File:  ".agents/learnings",
+			Query: query,
+		},
+		Remediation: Remediation{
+			Command:          "ao doctor --fix --only " + d.ID(),
+			ExplainCommand:   "ao doctor explain " + d.ID(),
+			AutoFixable:      true,
+			EstimatedActions: len(fallbackFiles),
+		},
+	}}, nil
+}
+
+// orphanedFlywheelLearningsFixer consolidates fallback learnings into the
+// canonical .agents/ao/learnings directory via Mutate Rename per file. It
+// refuses on a basename collision rather than clobber a distinct learning.
+type orphanedFlywheelLearningsFixer struct{}
+
+func (orphanedFlywheelLearningsFixer) ID() string {
+	return "fm-knowledge-orphaned-flywheel-learnings"
+}
+func (orphanedFlywheelLearningsFixer) Preconditions() []string {
+	return []string{
+		"both .agents/learnings and .agents/ao/learnings hold learning files",
+		"no basename collision between the two learnings directories",
+	}
+}
+func (orphanedFlywheelLearningsFixer) WritesTo() []string {
+	return []string{".agents/learnings", ".agents/ao/learnings"}
+}
+func (orphanedFlywheelLearningsFixer) Ops() []string     { return []string{"Rename"} }
+func (orphanedFlywheelLearningsFixer) Reversible() bool  { return true }
+func (orphanedFlywheelLearningsFixer) Idempotent() bool  { return true }
+func (orphanedFlywheelLearningsFixer) AutoFixable() bool { return true }
+
+func (f orphanedFlywheelLearningsFixer) Fix(ctx *MutateContext, env *DetectEnv, _ []Finding) (FixResult, error) {
+	res := FixResult{FixerID: f.ID(), FindingIDs: []string{f.ID()}}
+	for _, chain := range [][]string{{".agents", "ao", "learnings"}, {".agents", "learnings"}} {
+		if _, gerr := requireRealChainUnder(env.CWD, chain...); gerr != nil {
+			res.Err = fmt.Errorf("doctor: %s: %w", f.ID(), gerr)
+			return res, res.Err
+		}
+	}
+	primary, fallback := flywheelLearningsDirs(env)
+	primaryFiles := listLearningFiles(primary)
+	fallbackFiles := listLearningFiles(fallback)
+	if len(fallbackFiles) == 0 {
+		res.Fixed = true
+		return res, nil
+	}
+	primarySet := make(map[string]bool, len(primaryFiles))
+	for _, n := range primaryFiles {
+		primarySet[n] = true
+	}
+	for _, n := range fallbackFiles {
+		if primarySet[n] {
+			res.Err = fmt.Errorf("doctor: %s: name collision %q in both learnings dirs; resolve manually (refused_unsafe)", f.ID(), n)
+			return res, res.Err
+		}
+	}
+	// Refuse-before-mutate: re-verify every move source is still a REAL regular
+	// file NOW, before ANY rename lands. Mutate's before-read and backup follow
+	// a symlinked source, so a file that turned symlink between list and fix
+	// must refuse the whole run with zero actions — never reach Mutate.
+	for _, n := range fallbackFiles {
+		if src := filepath.Join(fallback, n); !realRegularFile(src) {
+			res.Err = fmt.Errorf("doctor: %s: %s is not a real regular file (refused_unsafe)", f.ID(), src)
+			return res, res.Err
+		}
+	}
+	// Ensure the canonical dir exists; if absent, create it through the
+	// chokepoint by staging the first move's .gitkeep is unnecessary — Rename's
+	// executeAtomic MkdirAll's filepath.Dir(dest) for each moved file.
+	for _, n := range fallbackFiles {
+		src := filepath.Join(fallback, n)
+		dest := filepath.Join(primary, n)
+		r, err := Mutate(ctx, src, Rename{To: dest})
+		if err != nil {
+			res.Err = fmt.Errorf("doctor: %s: move %s: %w", f.ID(), n, err)
+			return res, res.Err
+		}
+		if r.OK {
+			res.ActionsTaken++
+		}
+	}
+	if len(listLearningFiles(fallback)) != 0 && !ctx.DryRun {
+		res.Err = fmt.Errorf("doctor: %s: fix did not eliminate the finding", f.ID())
+		return res, res.Err
+	}
+	res.Fixed = true
+	return res, nil
+}
+
+// ---------------------------------------------------------------------------
+// FM: fm-knowledge-stale-index-drift (detect-only)
+// ---------------------------------------------------------------------------
+
+// staleIndexDriftDetector flags a search index that has drifted from the live
+// artifact tree: dead paths, content-mtime drift, and un-indexed files.
+type staleIndexDriftDetector struct{}
+
+func (staleIndexDriftDetector) ID() string           { return "fm-knowledge-stale-index-drift" }
+func (staleIndexDriftDetector) Subsystem() string    { return "knowledge" }
+func (staleIndexDriftDetector) Severity() string     { return "P2" }
+func (staleIndexDriftDetector) EstimatedCostMS() int { return 12 }
+func (staleIndexDriftDetector) OnlineRequired() bool { return false }
+func (staleIndexDriftDetector) QuickPath() bool      { return false }
+func (staleIndexDriftDetector) Describe() string {
+	return "search index has drifted from on-disk artifacts (dead/drifted/un-indexed)"
+}
+
+// indexEntry is the minimal projection of a SearchIndexEntry the drift detector
+// needs: the artifact path and the index-time modified timestamp.
+type indexEntry struct {
+	Path       string `json:"path"`
+	ModifiedAt string `json:"modified_at"`
+}
+
+// driftCounts holds the three drift classes the stale-index detector reports.
+type driftCounts struct {
+	dead, contentDrift, unindexed int
+}
+
+// computeIndexDrift compares the index against the artifact tree. It is pure:
+// stat + read only.
+func computeIndexDrift(env *DetectEnv, raw []byte) driftCounts {
+	var dc driftCounts
+	indexed := make(map[string]bool)
+	for _, t := range splitNonEmptyLines(raw) {
+		var e indexEntry
+		if err := json.Unmarshal([]byte(t), &e); err != nil || e.Path == "" {
+			continue
+		}
+		indexed[e.Path] = true
+		abs := filepath.Join(env.CWD, e.Path)
+		fi, err := os.Stat(abs)
+		if err != nil {
+			dc.dead++
+			continue
+		}
+		if mt, perr := parseIndexTime(e.ModifiedAt); perr == nil && fi.ModTime().After(mt) {
+			dc.contentDrift++
+		}
+	}
+	for _, sub := range artifactSubdirs {
+		dir := filepath.Join(env.CWD, ".agents", sub)
+		_ = filepath.WalkDir(dir, func(p string, de os.DirEntry, werr error) error {
+			if werr != nil || de.IsDir() {
+				return nil //nolint:nilerr // missing artifact dir is benign
+			}
+			if !indexableExts[strings.ToLower(filepath.Ext(de.Name()))] {
+				return nil
+			}
+			rel, rerr := filepath.Rel(env.CWD, p)
+			if rerr == nil && !indexed[rel] {
+				dc.unindexed++
+			}
+			return nil
+		})
+	}
+	return dc
+}
+
+func (d staleIndexDriftDetector) Detect(env *DetectEnv) ([]Finding, error) {
+	idx := searchIndexPath(env)
+	if !realChainUnder(env.CWD, ".agents", "ao", "index") || !realRepoFile(env.CWD, idx) {
+		return nil, nil // symlinked root or index: unsafe to consume
+	}
+	info, err := os.Stat(idx)
+	if err != nil || info.Size() == 0 {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(idx)
+	if err != nil {
+		return nil, fmt.Errorf("doctor: read search index: %w", err)
+	}
+	dc := computeIndexDrift(env, raw)
+	if dc.dead+dc.contentDrift+dc.unindexed == 0 {
+		return nil, nil
+	}
+	return []Finding{{
+		ID:         d.ID(),
+		Severity:   d.Severity(),
+		Subsystem:  d.Subsystem(),
+		Title:      fmt.Sprintf("%d dead path(s), %d content-drifted, %d un-indexed", dc.dead, dc.contentDrift, dc.unindexed),
+		Confidence: 1.0,
+		Evidence: Evidence{
+			File:  ".agents/ao/index/search-index.jsonl",
+			Query: "count .md/.jsonl under .agents artifact dirs vs index total_entries",
+		},
+		Remediation: Remediation{
+			Command:        "ao store rebuild",
+			ExplainCommand: "ao doctor explain " + d.ID(),
+			AutoFixable:    false,
+		},
+	}}, nil
+}
+
+// staleIndexDriftFixer is a detect-only refuser: there is no safe localized
+// auto-fix. The only sound repair is a full `ao store rebuild`, which is a
+// heavyweight existing command, not a doctor patch.
+type staleIndexDriftFixer struct{}
+
+func (staleIndexDriftFixer) ID() string { return "fm-knowledge-stale-index-drift" }
+func (staleIndexDriftFixer) Preconditions() []string {
+	return []string{"detect-only: no auto-fix; run `ao store rebuild`"}
+}
+func (staleIndexDriftFixer) WritesTo() []string { return nil }
+func (staleIndexDriftFixer) Ops() []string      { return nil }
+func (staleIndexDriftFixer) Reversible() bool   { return true }
+func (staleIndexDriftFixer) Idempotent() bool   { return true }
+func (staleIndexDriftFixer) AutoFixable() bool  { return false }
+
+func (f staleIndexDriftFixer) Fix(_ *MutateContext, _ *DetectEnv, _ []Finding) (FixResult, error) {
+	err := fmt.Errorf("doctor: %s: detect-only — no safe localized auto-fix; run `ao store rebuild` to regenerate the index", f.ID())
+	return FixResult{FixerID: f.ID(), FindingIDs: []string{f.ID()}, Fixed: false, Err: err}, err
+}
+
+// ---------------------------------------------------------------------------
+// FM: fm-knowledge-false-freshness (detect-only)
+// ---------------------------------------------------------------------------
+
+// falseFreshnessDetector flags a knowledge store whose freshness signal (max FS
+// modtime of sessions/) diverges from the authoritative newest Session.Date.
+type falseFreshnessDetector struct{}
+
+func (falseFreshnessDetector) ID() string           { return "fm-knowledge-false-freshness" }
+func (falseFreshnessDetector) Subsystem() string    { return "knowledge" }
+func (falseFreshnessDetector) Severity() string     { return "P3" }
+func (falseFreshnessDetector) EstimatedCostMS() int { return 8 }
+func (falseFreshnessDetector) OnlineRequired() bool { return false }
+func (falseFreshnessDetector) QuickPath() bool      { return false }
+func (falseFreshnessDetector) Describe() string {
+	return "knowledge freshness derived from FS modtime diverges from Session.Date"
+}
+
+func (d falseFreshnessDetector) Detect(env *DetectEnv) ([]Finding, error) {
+	if !realChainUnder(env.CWD, ".agents", "ao", "sessions") {
+		return nil, nil // symlinked root: unsafe to consume
+	}
+	sessionsDir := filepath.Join(knowledgeBaseDir(env), "sessions")
+	entries, err := os.ReadDir(sessionsDir)
+	if err != nil || len(entries) == 0 {
+		return nil, nil
+	}
+	fsNewest, contentNewest, parsedAny := freshnessSignals(sessionsDir, entries)
+	fsAge := nowProvider().Sub(fsNewest)
+	const skewTolerance = 24 * hour
+	falseFresh := fsAge < 14*day && (!parsedAny || absDuration(fsNewest.Sub(contentNewest)) > skewTolerance)
+	if !falseFresh {
+		return nil, nil
+	}
+	detail := "sessions/ modtime is recent but no parseable session JSONL exists"
+	if parsedAny {
+		detail = fmt.Sprintf("FS modtime vs newest Session.Date skew = %s", absDuration(fsNewest.Sub(contentNewest)))
+	}
+	return []Finding{{
+		ID:         d.ID(),
+		Severity:   d.Severity(),
+		Subsystem:  d.Subsystem(),
+		Title:      detail,
+		Confidence: 0.9,
+		Evidence: Evidence{
+			File:  ".agents/ao/sessions",
+			Query: "compare stat -c %Y of newest sessions/ file vs max session JSONL `date`",
+		},
+		Remediation: Remediation{
+			Command:        "ao forge transcript",
+			ExplainCommand: "ao doctor explain " + d.ID(),
+			AutoFixable:    false,
+		},
+	}}, nil
+}
+
+// falseFreshnessFixer is a detect-only refuser: the defect is a measurement bug
+// in CheckKnowledgeFreshness. There is no safe disk repair — fabricating or
+// touching a session file would manufacture a false signal of a different kind.
+type falseFreshnessFixer struct{}
+
+func (falseFreshnessFixer) ID() string { return "fm-knowledge-false-freshness" }
+func (falseFreshnessFixer) Preconditions() []string {
+	return []string{"detect-only: no auto-fix; run `ao forge transcript`"}
+}
+func (falseFreshnessFixer) WritesTo() []string { return nil }
+func (falseFreshnessFixer) Ops() []string      { return nil }
+func (falseFreshnessFixer) Reversible() bool   { return true }
+func (falseFreshnessFixer) Idempotent() bool   { return true }
+func (falseFreshnessFixer) AutoFixable() bool  { return false }
+
+func (f falseFreshnessFixer) Fix(_ *MutateContext, _ *DetectEnv, _ []Finding) (FixResult, error) {
+	err := fmt.Errorf("doctor: %s: detect-only — freshness is a measurement bug; run `ao forge transcript` for a real session", f.ID())
+	return FixResult{FixerID: f.ID(), FindingIDs: []string{f.ID()}, Fixed: false, Err: err}, err
+}

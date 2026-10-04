@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# corpus-delta-harness.sh — ag-u6jh (ag-8p8o Wave-1a)
+#
+# Runs ONE task in two CONTEXT ARMS and emits a ContextDeltaScorecard:
+#   context_off : agent runs against an isolated EMPTY corpus (fresh AO_AGENTS_DIR)
+#   context_on  : agent runs against the ORGANIC corpus (--corpus DIR, e.g. the repo's .agents)
+# K seeds per arm; arm score = pass-rate over seeds; aggregate_delta = on - off.
+#
+# WHY a side harness (not the ao eval runner): the deterministic eval runner rejects
+# non-shell runtimes ("out of deterministic scope", cli/internal/eval/io.go) and is
+# CI-locked. This lane is deliberately OUTSIDE it and is never part of the deterministic
+# canary suite. It is also NOT an `ao` subcommand (no new CLI surface).
+#
+# INJECTABLE RUNNER (so the harness is testable WITHOUT burning LLM calls):
+#   Set CORPUS_DELTA_RUNNER to a command. It is invoked as:
+#       "$CORPUS_DELTA_RUNNER" <task-id> <agent> <seed>
+#   with AO_AGENTS_DIR exported to the arm's corpus root. It MUST print one JSON line:
+#       {"pass": true|false, "score": <num>, "total": <num>}
+#   There is no built-in runner: the former default (scripts/eval-agent-harness.sh
+#   over evals/workbench/tasks) was removed 2026-09-03. CORPUS_DELTA_RUNNER is
+#   required; CORPUS_DELTA_EVIDENCE_KIND=live_agent labels a real-agent run.
+#
+# ⚠️ HONESTY: a run of this harness with a STUB runner (e.g. the bats test) proves the
+#    harness PLUMBING only — it is NOT evidence of the corpus delta. The real claim needs
+#    a real agent + held, non-engineered tasks + K seeds (ag-nfux W1b, ag-epgk W1c).
+#    Do not cite a stub/plumbing run as proof of the moat (cf. the wave0 confusion).
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+TASK_ID=""
+SEEDS=3
+CORPUS_DIR="$REPO_ROOT/.agents"
+AGENT="codex"
+OUT=""
+TIMEOUT=""   # ag-t8n: per-call agent timeout, exported to the runner as CORPUS_DELTA_TIMEOUT
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/corpus-delta-harness.sh --task <id> [options]
+
+  --task <id>        Task id handed to the runner (required)
+  --seeds <K>        Seeds per arm (default: 3)
+  --corpus <dir>     Organic corpus root for context_on (default: repo .agents)
+  --agent <name>     Agent name handed to the runner (default: codex).
+  --timeout <secs>   Per-call agent timeout, exported to the runner as
+                     CORPUS_DELTA_TIMEOUT (empty = runner default). Use a higher
+                     value for a live agent so a real run isn't cut short.
+  --out <file>       Write the ContextDeltaScorecard JSON here (default: stdout only)
+
+CORPUS_DELTA_RUNNER names the runner: a PATH command, or a relative or absolute
+path (resolved against the caller's cwd before any sandbox cd).
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --task) TASK_ID="$2"; shift 2 ;;
+    --seeds) SEEDS="$2"; shift 2 ;;
+    --corpus) CORPUS_DIR="$2"; shift 2 ;;
+    --agent) AGENT="$2"; shift 2 ;;
+    --timeout) TIMEOUT="$2"; shift 2 ;;
+    --out) OUT="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+[[ -n "$TASK_ID" ]] || { echo "error: --task required" >&2; exit 2; }
+[[ "$SEEDS" =~ ^[1-9][0-9]*$ ]] || { echo "error: --seeds must be a positive integer" >&2; exit 2; }
+
+# No default runner: the former default (scripts/eval-agent-harness.sh over
+# evals/workbench/tasks) was removed 2026-09-03 with the workbench tree. The
+# caller supplies a runner honoring the contract below; fail fast BEFORE any
+# seed so a missing runner never silently invalidates a metered run.
+RUNNER_RAW="${CORPUS_DELTA_RUNNER:-}"
+if [[ -z "$RUNNER_RAW" ]]; then
+  echo "error: CORPUS_DELTA_RUNNER is required (the default eval-agent-harness.sh runner was removed with evals/workbench; supply a runner: <task> <agent> <seed>, reading HOME, AO_AGENTS_DIR, CORPUS_DELTA_WORKSPACE)." >&2
+  exit 2
+fi
+# Resolve the runner to an absolute path BEFORE any cd: each seed runs from the
+# sandbox workspace, so a relative path would break there and a bare PATH command
+# must resolve against the caller's PATH, not the sandbox's. A PATH name (no slash)
+# goes through `command -v`; a path is canonicalized against the caller's cwd.
+if [[ "$RUNNER_RAW" != */* ]]; then
+  RUNNER="$(command -v "$RUNNER_RAW" 2>/dev/null || true)"
+  if [[ -z "$RUNNER" ]]; then
+    echo "error: CORPUS_DELTA_RUNNER '$RUNNER_RAW' is not an executable file (not found on PATH)" >&2
+    exit 2
+  fi
+else
+  RUNNER="$RUNNER_RAW"
+  [[ "$RUNNER" == /* ]] || RUNNER="$PWD/$RUNNER"
+fi
+if [[ ! -f "$RUNNER" || ! -x "$RUNNER" ]]; then
+  echo "error: CORPUS_DELTA_RUNNER '$RUNNER_RAW' is not an executable file" >&2
+  exit 2
+fi
+RUNNER="$(cd "$(dirname "$RUNNER")" && pwd)/$(basename "$RUNNER")"
+
+# ag-t8n: the scorecard names its evidence kind. With no built-in live runner the
+# harness cannot tell a live agent from a stub, so the caller declares it:
+# CORPUS_DELTA_EVIDENCE_KIND=live_agent for a real agent run; default is plumbing.
+# Validated HERE, before any sandbox exists or any seed runs, so bad input costs
+# zero runner calls (a live agent is metered).
+EVIDENCE_KIND="${CORPUS_DELTA_EVIDENCE_KIND:-harness_plumbing}"
+if command -v sha256sum >/dev/null 2>&1; then
+  RUNNER_SHA256="$(sha256sum "$RUNNER" | awk '{print $1}')"
+else
+  RUNNER_SHA256="$(shasum -a 256 "$RUNNER" | awk '{print $1}')"
+fi
+case "$EVIDENCE_KIND" in
+  harness_plumbing) ;;
+  live_agent)
+    # A live-agent label is a caller declaration the harness cannot prove. The
+    # receipt says so (evidence_attestation.verified=false) and binds the
+    # resolved runner's path and SHA-256 so a reader can check the claim against
+    # a known agent binary; the obvious stubs are refused cheaply: a runner
+    # under a test tree or named stub or fake. The check runs on the canonical
+    # absolute path, so a relative spelling cannot dodge it.
+    case "$RUNNER" in
+      */tests/*|*stub*|*fake*)
+        echo "error: CORPUS_DELTA_EVIDENCE_KIND=live_agent requires a real runner outside the test tree, not named stub or fake; got '$RUNNER_RAW' (resolved: $RUNNER)" >&2; exit 2 ;;
+    esac ;;
+  *) echo "error: CORPUS_DELTA_EVIDENCE_KIND must be harness_plumbing or live_agent; got '$EVIDENCE_KIND'" >&2; exit 2 ;;
+esac
+
+# --- ag-5apc: always-loaded-root contamination fix REDACTED
+# Isolating AO_AGENTS_DIR alone is INSUFFICIENT: the agent also auto-loads knowledge
+# from always-loaded roots — the repo-root CLAUDE.md, .claude/rules/*, the user-global
+# ~/.claude/CLAUDE.md, and the auto-memory MEMORY.md. Read in BOTH arms, those leave no
+# delta to measure. So each arm runs in an isolated SANDBOX (HOME + workspace) and these
+# surfaces are treated as CORPUS — present in context_on, absent from context_off.
+# Sources are env-overridable so the self-test can point them at marker fixtures.
+SRC_REPO_ROOT="${CORPUS_DELTA_REPO_ROOT:-$REPO_ROOT}"
+SRC_USER_CLAUDE="${CORPUS_DELTA_USER_CLAUDE:-$HOME/.claude/CLAUDE.md}"
+SRC_MEM_DIR="${CORPUS_DELTA_MEM_DIR:-$HOME/.claude/projects/-home-boful-dev-agentops/memory}"
+# Optional auth base: a dir copied into every sandbox HOME's .claude BEFORE context is
+# applied, so real agents keep their credentials/settings while context is still stripped
+# from the off arm (off = base − context, on = base + context). Empty in tests.
+HOME_BASE="${CORPUS_DELTA_HOME_BASE:-}"
+# ag-94f: codex auth lives in ~/.codex (NOT ~/.claude), so an isolated sandbox HOME
+# strips it and the headless codex run fails 401 Unauthorized on EVERY seed in BOTH arms — a
+# DEGRADED run, not a delta. Carry codex CREDENTIALS into each sandbox HOME's .codex in
+# BOTH arms (auth is runtime, never corpus context). Only auth/config files are copied —
+# NOT codex sessions/history/log (those are codex's own memory, not needed and not context).
+# Overridable so the self-test can point it at a marker dir; set empty to disable.
+CODEX_HOME_SRC="${CORPUS_DELTA_CODEX_HOME:-$HOME/.codex}"
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+# build_arm_sandbox <variant> <corpus_root> -> echoes "<home> <workspace> <agents_dir>"
+build_arm_sandbox() {
+  local variant="$1" corpus_root="$2" sb home ws agents
+  sb="$(mktemp -d -p "$WORK")"
+  home="$sb/home"; ws="$sb/ws"; agents="$ws/.agents"
+  mkdir -p "$home/.claude" "$ws" "$agents"
+  # auth/settings base (preserved in BOTH arms; never carries context)
+  if [[ -n "$HOME_BASE" && -d "$HOME_BASE" ]]; then
+    cp -r "$HOME_BASE/." "$home/.claude/" 2>/dev/null || true
+  fi
+  # ag-94f: codex credentials (BOTH arms; auth is runtime, never corpus context). Copy
+  # only the auth/config files so the agent can authenticate inside the isolated HOME;
+  # codex sessions/history/log are deliberately NOT copied.
+  if [[ -n "$CODEX_HOME_SRC" && -d "$CODEX_HOME_SRC" ]]; then
+    mkdir -p "$home/.codex"
+    local cf
+    for cf in auth.json config.toml config.json; do
+      [[ -f "$CODEX_HOME_SRC/$cf" ]] && cp "$CODEX_HOME_SRC/$cf" "$home/.codex/$cf" 2>/dev/null || true
+    done
+  fi
+  if [[ "$variant" == "context_on" ]]; then
+    # project always-loaded surface
+    if [[ -f "$SRC_REPO_ROOT/CLAUDE.md" ]]; then cp "$SRC_REPO_ROOT/CLAUDE.md" "$ws/CLAUDE.md"; fi
+    if [[ -d "$SRC_REPO_ROOT/.claude/rules" ]]; then
+      mkdir -p "$ws/.claude"; cp -r "$SRC_REPO_ROOT/.claude/rules" "$ws/.claude/rules"
+    fi
+    # user-global surface + auto-memory
+    if [[ -f "$SRC_USER_CLAUDE" ]]; then cp "$SRC_USER_CLAUDE" "$home/.claude/CLAUDE.md"; fi
+    if [[ -d "$SRC_MEM_DIR" ]]; then
+      mkdir -p "$home/.claude/projects/_mem/memory"
+      cp -r "$SRC_MEM_DIR/." "$home/.claude/projects/_mem/memory/" 2>/dev/null || true
+    fi
+    # organic .agents corpus
+    if [[ -d "$corpus_root" ]]; then cp -r "$corpus_root/." "$agents/" 2>/dev/null || true; fi
+  else
+    # context_off: strip context the base may have carried, so off is provably clean.
+    rm -f "$home/.claude/CLAUDE.md"
+    rm -rf "$home/.claude/projects" "$home/.claude/rules"
+  fi
+  echo "$home $ws $agents"
+}
+
+# run_arm <variant> <corpus_root> -> echoes "passes degraded total elapsed_seconds"
+# The runner is invoked with HOME=<sandbox home>, AO_AGENTS_DIR=<sandbox agents>, and
+# CORPUS_DELTA_WORKSPACE=<sandbox ws>; a real agent MUST run with that HOME and cwd=ws so
+# neither arm can reach always-loaded knowledge outside its sandbox.
+# ag-t8n: count DEGRADED seeds (runner emitted "degraded":true — launch failure, timeout,
+# rate-limit) so a broken run is flagged, never recorded as an honest null; stamp elapsed
+# so an impossibly-fast (degraded) run is self-evident.
+run_arm() {
+  local variant="$1" corpus_root="$2"
+  local passes=0 degraded=0 seed line is_pass is_degr home ws agents t0 t1
+  t0="$(date +%s)"
+  echo "[corpus-delta] arm=$variant corpus=$corpus_root seeds=$SEEDS" >&2
+  for ((seed = 1; seed <= SEEDS; seed++)); do
+    read -r home ws agents < <(build_arm_sandbox "$variant" "$corpus_root")
+    # Runner contract: <task> <agent> <seed>; reads HOME, AO_AGENTS_DIR, CORPUS_DELTA_WORKSPACE
+    # (and CORPUS_DELTA_TIMEOUT when --timeout is given); prints one JSON line last.
+    line="$(cd "$ws" && HOME="$home" AO_AGENTS_DIR="$agents" CORPUS_DELTA_WORKSPACE="$ws" CORPUS_DELTA_TIMEOUT="$TIMEOUT" "$RUNNER" "$TASK_ID" "$AGENT" "$seed" 2>/dev/null | tail -1)"
+    is_pass="$(printf '%s' "$line" | jq -r 'if .pass == true then 1 else 0 end' 2>/dev/null || echo 0)"
+    is_degr="$(printf '%s' "$line" | jq -r 'if .degraded == true then 1 else 0 end' 2>/dev/null || echo 0)"
+    [[ "$is_pass" == "1" ]] && passes=$((passes + 1))
+    [[ "$is_degr" == "1" ]] && degraded=$((degraded + 1))
+  done
+  t1="$(date +%s)"
+  echo "$passes $degraded $SEEDS $((t1 - t0))"
+}
+
+read -r off_pass off_degr off_total off_elapsed < <(run_arm context_off "")
+read -r on_pass on_degr on_total on_elapsed < <(run_arm context_on "$CORPUS_DIR")
+
+# pass-rate per arm; delta = on - off. A degraded arm (>=1 degraded seed) is INVALID per the
+# prereg — its score/delta must NOT be read as a real result (delta_valid=false).
+scorecard="$(jq -n \
+  --argjson off_pass "$off_pass" --argjson off_degr "$off_degr" --argjson off_total "$off_total" --argjson off_elapsed "$off_elapsed" \
+  --argjson on_pass "$on_pass" --argjson on_degr "$on_degr" --argjson on_total "$on_total" --argjson on_elapsed "$on_elapsed" \
+  --arg task "$TASK_ID" --argjson seeds "$SEEDS" --arg evidence_kind "$EVIDENCE_KIND" \
+  --arg runner_path "$RUNNER" --arg runner_sha256 "$RUNNER_SHA256" \
+  --arg attestation_basis "$([[ "$EVIDENCE_KIND" = live_agent ]] && echo caller_declaration || echo harness_default)" \
+  '
+  ($off_pass / $off_total) as $off_score |
+  ($on_pass / $on_total) as $on_score |
+  (($off_degr + $on_degr) > 0) as $degraded |
+  {
+    schema_version: 1,
+    suite_id: ("corpus-delta-" + $task),
+    suite_path: "scripts/corpus-delta-harness.sh",
+    evidence_kind: $evidence_kind,
+    runner: { path: $runner_path, sha256: $runner_sha256 },
+    evidence_attestation: { basis: $attestation_basis, verified: false },
+    seeds_per_arm: $seeds,
+    elapsed_seconds: ($off_elapsed + $on_elapsed),
+    degraded: $degraded,
+    delta_valid: ($degraded | not),
+    context_off: { variant: "context_off", passes: $off_pass, degraded_seeds: $off_degr, total: $off_total, elapsed_seconds: $off_elapsed, aggregate_score: ($off_score | (.*10000|round)/10000), status: (if $off_degr > 0 then "degraded" elif $off_score >= 0.75 then "pass" else "fail" end) },
+    context_on:  { variant: "context_on",  passes: $on_pass,  degraded_seeds: $on_degr,  total: $on_total,  elapsed_seconds: $on_elapsed, aggregate_score: ($on_score  | (.*10000|round)/10000), status: (if $on_degr > 0 then "degraded" elif $on_score  >= 0.75 then "pass" else "fail" end) },
+    aggregate_delta: (($on_score - $off_score) | (.*10000|round)/10000)
+  }')"
+
+printf '%s\n' "$scorecard"
+if [[ -n "$OUT" ]]; then
+  printf '%s\n' "$scorecard" > "$OUT"
+fi

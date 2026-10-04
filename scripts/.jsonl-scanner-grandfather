@@ -1,0 +1,15 @@
+# scripts/.jsonl-scanner-grandfather — FILENAME-pinned grandfather list.
+#
+# Every cli/**/*.go file (outside cli/internal/storage/) that currently has
+# BOTH a bufio.NewScanner( invocation AND a .jsonl mention. These predate the ratchet
+# (age-storage-hardening-roxg.3) and are exempt. The list only SHRINKS: a
+# grandfathered file that no longer trips the heuristic must be pruned.
+#
+# Blessed replacement for a raw scanner over JSONL: storage.ScanJSONL /
+# storage.ScanJSONLFile (loud storage.ErrLineTooLong policy).
+#
+# Regenerate with:  bash scripts/check-jsonl-scanner-ratchet.sh --regenerate
+# (regenerate at LAND time, after the final rebase — sibling adoptions may
+#  have cleaned sites.)
+cli/internal/doctor/engine.go
+cli/internal/drrebuild/drrebuild.go

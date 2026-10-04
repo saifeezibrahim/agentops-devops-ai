@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# check-hookless-cold-start.sh — scenario-2 regression gate for soc-qh2g1.
+#
+# AgentOps 3.0 is hookless: no SessionStart/Stop hook ships, so no cold-start or
+# continuity doc/skill may present a hook path or SessionStart hook as a
+# CURRENTLY ACTIVE surface. A hook reference is allowed only on a line that
+# hedges it as opt-in / author-it-yourself / historical / removed / legacy (the
+# hooks-authoring escape hatch).
+#
+# Scope is a FIXED list of cold-start / continuity AND workflow-discipline
+# surfaces. It deliberately does NOT scan all of docs/+skills/ (release notes, the
+# hooks-authoring skill, and scope guards legitimately name hook paths). The repo
+# CLAUDE.md + workflow owner (docs/agent-workflow-reference.md) and the session-scope surfaces
+# (ship-loop, the evolve postmortem checkpoint) were brought IN scope by ag-o5xp:
+# their `session-pr-counter.sh` reference was a stale active-surface promise after
+# the hook was removed in the #511 hookless teardown. They are now hedged
+# (removed / opt-in / hooks-authoring) and gated here so the drift cannot recur.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+FILES=(
+  "AGENTS.md"
+  "docs/architecture/primitive-chains.md"
+  "skills/reality-check/SKILL.md"
+  # Requested documentation setup and handoffs now belong to doc; ordinary
+  # sessions have no mandatory bootstrap or context-loading command.
+  "skills/doc/SKILL.md"
+  "skills/memory/SKILL.md"
+  "skills/validate/SKILL.md"
+  "docs/newcomer-guide.md"
+  # Workflow-discipline surfaces: must never present the removed
+  # session-pr-counter hook as an active surface.
+  "CLAUDE.md"
+  "docs/agent-workflow-reference.md"
+)
+
+# A hook path is "hedged" (allowed) when its line also carries one of these.
+# These hedge ARTIFACT EXISTENCE (opt-in / author-it-yourself / historical /
+# removed). "When supported" is deliberately NOT here: it hedges harness
+# capability, not whether AgentOps ships the hook (it does not).
+HEDGE='hookless|explicit|replacement|replaced|opt-in|optional|author|authored|if you author|hooks-authoring|historical|legacy|compatibility|removed|no such hook|ships no|example|if installed|when hooks are installed|when installed|used to|formerly'
+HOOK_PROMISE='hooks/[A-Za-z0-9_.-]+\.sh|[A-Za-z0-9_.-]*session-(start|end|autostart)[A-Za-z0-9_.-]*\.sh|Session(Start|End) hook|session-(start|end|autostart) hook|startup hooks?|precompact-snapshot hook|auto-inject[^[:cntrl:]]*hook|hook[^[:cntrl:]]*auto-inject'
+
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
+
+violations=0
+scanned=0
+for rel in "${FILES[@]}"; do
+  file="$ROOT/$rel"
+  [[ -f "$file" ]] || continue
+  scanned=$((scanned + 1))
+  while IFS= read -r match; do
+    [[ -n "$match" ]] || continue
+    lineno="${match%%:*}"
+    content="${match#*:}"
+    if ! grep -qiE "$HEDGE" <<<"$content"; then
+      printf 'FAIL: %s:%s presents a hook/startup promise as an active surface without an opt-in/historical hedge\n' \
+        "$rel" "$lineno" >&2
+      printf '      %s\n' "$content" >&2
+      violations=$((violations + 1))
+    fi
+  done < <(grep -nE "$HOOK_PROMISE" "$file" || true)
+done
+
+[[ "$scanned" -gt 0 ]] || fail "no cold-start surfaces found under $ROOT"
+
+if [[ "$violations" -gt 0 ]]; then
+  fail "$violations stale hook promise(s) in cold-start/continuity surfaces. Reframe as explicit \`ao\` commands or hedge as opt-in (author via the hooks-authoring skill)."
+fi
+
+printf 'PASS: no stale hook-context promises in %d cold-start/continuity surface(s)\n' "$scanned"

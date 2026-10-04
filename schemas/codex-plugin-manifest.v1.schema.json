@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentops.dev/schemas/codex-plugin-manifest.v1.schema.json",
+  "title": "AgentOps Codex Plugin Manifest v1",
+  "$comment": "practices: [microservices, design-by-contract]",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "$schema": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "skills": {
+      "type": "string",
+      "pattern": "^\\./"
+    },
+    "mcpServers": {
+      "type": "string",
+      "pattern": "^\\./"
+    },
+    "mcp": {
+      "type": "string",
+      "pattern": "^\\./"
+    },
+    "apps": {
+      "type": "string",
+      "pattern": "^\\./"
+    },
+    "interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "shortDescription": {
+          "type": "string",
+          "minLength": 1
+        },
+        "longDescription": {
+          "type": "string",
+          "minLength": 1
+        },
+        "developerName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "websiteURL": {
+          "type": "string"
+        },
+        "privacyPolicyURL": {
+          "type": "string"
+        },
+        "termsOfServiceURL": {
+          "type": "string"
+        },
+        "defaultPrompt": {
+          "type": ["string", "array"],
+          "maxLength": 128,
+          "maxItems": 3,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "brandColor": {
+          "type": "string"
+        },
+        "composerIcon": {
+          "type": "string",
+          "pattern": "^\\./"
+        },
+        "logo": {
+          "type": "string",
+          "pattern": "^\\./"
+        },
+        "screenshots": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\./"
+          }
+        }
+      }
+    }
+  }
+}

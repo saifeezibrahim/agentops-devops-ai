@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# bd-shim v1 + Go build gate
+# bd-hooks-version: 0.49.3
+#
+# Pre-commit hook: validates Go code compiles before allowing commit.
+# Also checks embedded hooks sync when hooks/ files are staged.
+# Delegates to bd for issue tracking after validation passes.
+
+set -euo pipefail
+
+# $0-relative resolution breaks when this hook is installed into .git/hooks
+# (dirname/$0/.. = .git). Ask git for the real root instead.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# --- Go build/vet gate (only when cli/ files are staged) ---
+if command -v go >/dev/null 2>&1; then
+    staged_go=$(git diff --cached --name-only -- 'cli/*.go' 'cli/**/*.go' 'cli/go.mod' 'cli/go.sum' 2>/dev/null || true)
+    if [[ -n "$staged_go" ]]; then
+        echo "pre-commit: Go files staged — running build + vet..."
+        if ! (cd "$REPO_ROOT/cli" && go build -o /dev/null ./cmd/ao 2>&1); then
+            echo "pre-commit: BLOCKED — go build failed. Fix compile errors before committing."
+            exit 1
+        fi
+        if ! (cd "$REPO_ROOT/cli" && go vet ./... 2>&1); then
+            echo "pre-commit: BLOCKED — go vet failed. Fix issues before committing."
+            exit 1
+        fi
+        echo "pre-commit: Go build + vet passed."
+    fi
+fi
+
+# --- Embedded hooks auto-sync (when hooks/, lib/, or standards refs are staged) ---
+staged_embed=$(git diff --cached --name-only -- \
+    'hooks/*' \
+    'lib/hook-helpers.sh' \
+    'skills/standards/references/*' \
+    'skills/using-agentops/SKILL.md' \
+    2>/dev/null || true)
+if [[ -n "$staged_embed" ]]; then
+    if [[ -f "$REPO_ROOT/cli/Makefile" ]] && command -v make >/dev/null 2>&1; then
+        echo "pre-commit: Embedded source files changed — running sync-hooks..."
+        (cd "$REPO_ROOT/cli" && make sync-hooks 2>&1)
+        # Stage the synced files automatically
+        git add "$REPO_ROOT/cli/embedded/" 2>/dev/null || true
+        echo "pre-commit: Embedded hooks synced and staged."
+    fi
+fi
+
+# --- Dual changelog sync (auto-copy new release entries to docs/CHANGELOG.md) ---
+if git diff --cached --name-only -- 'CHANGELOG.md' 2>/dev/null | grep -q '^CHANGELOG.md$'; then
+    if [[ -f "$REPO_ROOT/docs/CHANGELOG.md" ]]; then
+        # Extract the latest version from root changelog (portable: no grep -P)
+        latest_version=$(awk '/^## \[[0-9]+\.[0-9]+\.[0-9]+\]/{gsub(/.*\[|\].*/,""); print; exit}' "$REPO_ROOT/CHANGELOG.md")
+        if [[ -n "$latest_version" ]] && ! grep -Fq "## [$latest_version]" "$REPO_ROOT/docs/CHANGELOG.md"; then
+            echo "pre-commit: Root CHANGELOG.md has [$latest_version] but docs/CHANGELOG.md does not."
+            # Extract the new entry to a temp file using sed (awk range breaks on multibyte UTF-8)
+            escaped_ver=$(printf '%s' "$latest_version" | sed 's/\./\\./g')
+            sed -n "/^## \[${escaped_ver}\]/,/^## \[/{/^## \[/!p; /^## \[${escaped_ver}\]/p;}" \
+                "$REPO_ROOT/CHANGELOG.md" > "$REPO_ROOT/docs/.changelog-entry.tmp"
+            # Insert after ## [Unreleased] line in docs/CHANGELOG.md
+            {
+                found_unreleased=0
+                while IFS= read -r line; do
+                    printf '%s\n' "$line"
+                    if [[ "$found_unreleased" -eq 0 ]] && [[ "$line" == "## [Unreleased]"* ]]; then
+                        found_unreleased=1
+                        printf '\n'
+                        cat "$REPO_ROOT/docs/.changelog-entry.tmp"
+                    fi
+                done < "$REPO_ROOT/docs/CHANGELOG.md"
+            } > "$REPO_ROOT/docs/CHANGELOG.md.tmp"
+            mv "$REPO_ROOT/docs/CHANGELOG.md.tmp" "$REPO_ROOT/docs/CHANGELOG.md"
+            rm -f "$REPO_ROOT/docs/.changelog-entry.tmp"
+            git add "$REPO_ROOT/docs/CHANGELOG.md" 2>/dev/null || true
+            echo "pre-commit: docs/CHANGELOG.md synced with [$latest_version] and staged."
+        fi
+    fi
+fi
+
+# --- Plugin/marketplace version parity check (on release commits) ---
+commit_msg_file="$REPO_ROOT/.git/COMMIT_EDITMSG"
+if [[ -f "$commit_msg_file" ]] && grep -q '^Release v' "$commit_msg_file" 2>/dev/null; then
+    release_ver=$(grep -o 'Release v[0-9]*\.[0-9]*\.[0-9]*' "$commit_msg_file" | head -1 | sed 's/Release v//')
+    if [[ -n "$release_ver" ]]; then
+        plugin_ver=""
+        marketplace_ver=""
+        if [[ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]]; then
+            plugin_ver=$(grep -o '"version": *"[^"]*"' "$REPO_ROOT/.claude-plugin/plugin.json" | head -1 | grep -o '[0-9][0-9.]*')
+        fi
+        if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
+            marketplace_ver=$(grep -o '"version": *"[^"]*"' "$REPO_ROOT/.claude-plugin/marketplace.json" | head -1 | grep -o '[0-9][0-9.]*')
+        fi
+        if [[ -n "$plugin_ver" ]] && [[ "$plugin_ver" != "$release_ver" ]]; then
+            echo "pre-commit: WARN — .claude-plugin/plugin.json version ($plugin_ver) != release version ($release_ver)"
+        fi
+        if [[ -n "$marketplace_ver" ]] && [[ "$marketplace_ver" != "$release_ver" ]]; then
+            echo "pre-commit: WARN — .claude-plugin/marketplace.json version ($marketplace_ver) != release version ($release_ver)"
+        fi
+    fi
+fi
+
+# --- bd issue tracking (existing behavior) ---
+if command -v bd >/dev/null 2>&1; then
+    bd hooks run pre-commit "$@"
+fi

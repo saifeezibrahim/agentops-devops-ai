@@ -1,0 +1,27 @@
+# local registry names minus official manifest
+# full-local sha256: REDACTED
+ab-testing
+admin-page-for-nextjs-sites
+REDACTED
+agent-mail
+automating-your-automations
+bd-to-br-migration
+beads-br
+beads-bv
+beads-workflow
+brenner
+browser-extension-automation
+browser-testing-with-ntm
+caam
+cass-memory
+cc-hooks
+changelog-md-workmanship
+deadlock-finder-and-fixer
+REDACTED
+document-to-latex
+papers
+planning-workflow
+REDACTED
+rg-optimized
+testing-metamorphic
+REDACTED

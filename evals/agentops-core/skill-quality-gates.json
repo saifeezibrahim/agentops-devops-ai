@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "id": "agentops-core.skill-quality-gates",
+  "name": "AgentOps Skill Quality Gates Canary",
+  "description": "Offline public canary for skill lint, schema, runtime-format, CLI-snippet, and size-warning ratchets used to judge skill edits.",
+  "practices": ["llm-eval-harness", "design-by-contract"],
+  "domain": "skill",
+  "visibility": "public_canary",
+  "tier": "deterministic",
+  "owners": ["agentops"],
+  "tags": ["canary", "offline", "skills", "quality", "ratchet"],
+  "allowed_runtimes": ["shell", "static"],
+  "environment": {
+    "offline_required": true,
+    "network": "forbidden",
+    "scrub_env_prefixes": ["AGENTOPS_RPI_RUNTIME", "ANTHROPIC_", "OPENAI_"],
+    "timeout_seconds": 180
+  },
+  "scoring": {
+    "aggregate_threshold": 1,
+    "dimensions": [
+      {"name": "correctness", "weight": 2, "threshold": 1, "critical": true},
+      {"name": "artifact_quality", "weight": 2, "threshold": 1, "critical": true},
+      {"name": "runtime_compatibility", "weight": 1, "threshold": 1, "critical": true},
+      {"name": "process_adherence", "weight": 1, "threshold": 1},
+      {"name": "efficiency", "weight": 1, "threshold": 1}
+    ]
+  },
+  "baseline_policy": {"mode": "compare", "baseline_path": ".agents/evals/baselines/agentops-core.skill-quality-gates.baseline.json", "blocking_gate": "none"},
+  "cases": [
+    {
+      "id": "skill-validation-suite",
+      "title": "full skill validation suite passes",
+      "kind": "command",
+      "objective": "Run the aggregate skill validation suite so per-skill validate scripts, lint, feature coverage, token budgets, aliases, and lifecycle skill tests stay green.",
+      "runtime": "shell",
+      "timeout_seconds": 210,
+      "inputs": {
+        "cwd": "../..",
+        "shell": "bash tests/skills/run-all.sh"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains_auto_detect", "value": {"command": "bash tests/skills/run-all.sh", "pattern": "Total Skills: ([0-9]+)", "expected_group": 1, "tolerance_pct": 0}},
+        {"type": "stdout_contains", "value": "OVERALL: PASS"}
+      ],
+      "dimensions": ["correctness", "artifact_quality", "process_adherence"],
+      "critical": true
+    },
+    {
+      "id": "skill-schema-validation",
+      "title": "skill frontmatter validation passes",
+      "kind": "command",
+      "objective": "Ensure all shared skill frontmatter remains valid against the current v2 schema and hexagonal metadata contract.",
+      "runtime": "shell",
+      "inputs": {
+        "cwd": "../..",
+        "shell": "scripts/validate-skill-frontmatter.sh"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains_auto_detect", "value": {"command": "bash scripts/validate-skill-frontmatter.sh", "pattern": "validate-skill-frontmatter: ([0-9]+)/([0-9]+) ok", "expected_group": 1, "tolerance_pct": 0}}
+      ],
+      "dimensions": ["correctness", "artifact_quality"],
+      "critical": true
+    },
+    {
+      "id": "skill-runtime-format-validation",
+      "title": "skill runtime format validation passes",
+      "kind": "command",
+      "objective": "Ensure Claude/shared and Codex-native skill formats remain runtime-compatible.",
+      "runtime": "shell",
+      "timeout_seconds": 180,
+      "inputs": {
+        "cwd": "../..",
+        "shell": "scripts/validate-skill-runtime-formats.sh"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains", "value": "Skill runtime format validation passed."}
+      ],
+      "dimensions": ["runtime_compatibility", "artifact_quality"],
+      "critical": true
+    },
+    {
+      "id": "skill-cli-snippet-validation",
+      "title": "skill CLI snippets remain executable",
+      "kind": "command",
+      "objective": "Ensure CLI snippets embedded in skills still match the shipped ao command surface.",
+      "runtime": "shell",
+      "inputs": {
+        "cwd": "../..",
+        "shell": "scripts/validate-skill-cli-snippets.sh"
+      },
+      "expectations": [
+        {"type": "exit_code", "value": 0},
+        {"type": "stdout_contains", "value": "Skill CLI snippet validation passed."}
+      ],
+      "dimensions": ["correctness", "process_adherence"],
+      "critical": true
+    },
+    {
+      "id": "skill-quality-check-registry",
+      "title": "ordinary deterministic skill checks remain registered",
+      "kind": "artifact_check",
+      "objective": "Keep skill quality checks available through ao gate check without making them Git admission policy.",
+      "expectations": [
+        {"type": "artifact_contains", "target": "../../cli/internal/gates/checks/seed.go", "value": "ID: \"skill.schema\""},
+        {"type": "artifact_contains", "target": "../../cli/internal/gates/checks/seed.go", "value": "ID: \"skill.runtime-formats\""},
+        {"type": "artifact_contains", "target": "../../cli/internal/gates/checks/seed.go", "value": "ID: \"skill.cli-snippets\""}
+      ],
+      "dimensions": ["process_adherence", "artifact_quality"]
+    }
+  ]
+}

@@ -1,0 +1,147 @@
+{
+  "binding_sha256": "sha256:REDACTED",
+  "canonical_skill": {
+    "content_base64": "REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED/REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED+REDACTEDcnM/REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED/REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDYSBsaWZlY3ljbGUgZ2F0ZS4K",
+    "name": "premortem",
+    "path": "skills/premortem/SKILL.md",
+    "sha256": "sha256:REDACTED"
+  },
+  "capture_contract": {
+    "path": "capture-contract.json",
+    "sha256": "sha256:REDACTED"
+  },
+  "capture_evaluator": {
+    "dispatch_helper": {
+      "path": "scripts/lib/codex-exec.sh",
+      "sha256": "sha256:REDACTED"
+    },
+    "harness": {
+      "path": "scripts/probe-skill.sh",
+      "sha256": "sha256:REDACTED"
+    },
+    "metadata_helper": {
+      "path": "scripts/lib/probe-fixture-metadata.py",
+      "sha256": "sha256:REDACTED"
+    },
+    "network_proxy": {
+      "path": "scripts/lib/probe-connect-proxy.py",
+      "sha256": "sha256:REDACTED"
+    },
+    "preamble": {
+      "path": "scripts/lib/preamble.sh",
+      "sha256": "sha256:REDACTED"
+    }
+  },
+  "capture_inputs": [
+    {
+      "content_base64": "REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED=",
+      "path": "probe.json",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "content_base64": "REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED==",
+      "path": "question.md",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "content_base64": "REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED",
+      "path": "discriminator.sh",
+      "sha256": "sha256:REDACTED"
+    }
+  ],
+  "probe": "premortem-plan-shape-t2",
+  "producer": {
+    "adapter": "codex",
+    "effort": "xhigh",
+    "identity": {
+      "coverage_eligible": true,
+      "executable_sha256": "sha256:REDACTED",
+      "override": false,
+      "source": "native-codex-path",
+      "version": "codex-cli 0.145.0"
+    },
+    "model": "gpt-5.6-luna",
+    "threads": [
+      {
+        "path": "control-1.txt",
+        "thread_id": "REDACTED"
+      },
+      {
+        "path": "treatment-1.txt",
+        "thread_id": "REDACTED"
+      },
+      {
+        "path": "control-2.txt",
+        "thread_id": "REDACTED"
+      },
+      {
+        "path": "treatment-2.txt",
+        "thread_id": "REDACTED"
+      }
+    ]
+  },
+  "prompts": [
+    {
+      "content_base64": "REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED==",
+      "path": "control.prompt",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "content_base64": "REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED/REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED+REDACTEDcnM/REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTED/REDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDREDACTEDT0sgbWVhbnMgaXQgaXMgbm90Lgo=",
+      "path": "treatment.prompt",
+      "sha256": "sha256:REDACTED"
+    }
+  ],
+  "reps": 2,
+  "requested_producer": {
+    "effort": "xhigh",
+    "model": "gpt-5.6-luna"
+  },
+  "schedule": [
+    {
+      "arm": "control",
+      "position": 1,
+      "rep": 1
+    },
+    {
+      "arm": "treatment",
+      "position": 2,
+      "rep": 1
+    },
+    {
+      "arm": "treatment",
+      "position": 3,
+      "rep": 2
+    },
+    {
+      "arm": "control",
+      "position": 4,
+      "rep": 2
+    }
+  ],
+  "schema": "REDACTED.v3",
+  "scoring": {
+    "discriminator_timeout_seconds": 2,
+    "response_extraction": "codex-jsonl-final-agent-message.v1",
+    "transcript_format": "codex-exec-jsonl.v1"
+  },
+  "transcripts": [
+    {
+      "path": "control-1.txt",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "path": "treatment-1.txt",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "path": "control-2.txt",
+      "sha256": "sha256:REDACTED"
+    },
+    {
+      "path": "treatment-2.txt",
+      "sha256": "sha256:REDACTED"
+    }
+  ],
+  "treatment_source": "canonical-skill"
+}

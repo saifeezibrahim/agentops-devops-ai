@@ -1,0 +1,137 @@
+{
+  "schema": "agentops-skill-probe.v3",
+  "probe": "validate-seeded-closeout-t2",
+  "skill": "validate",
+  "mode": "replay",
+  "generated_at": "2026-08-27T00:08:59Z",
+  "reps": 2,
+  "producer": {
+    "adapter": "codex",
+    "effort": "xhigh",
+    "identity": {
+      "coverage_eligible": true,
+      "executable_sha256": "sha256:REDACTED",
+      "override": false,
+      "source": "native-codex-path",
+      "version": "codex-cli 0.145.0"
+    },
+    "model": "gpt-5.6-luna",
+    "threads": [
+      {
+        "path": "control-1.txt",
+        "thread_id": "REDACTED"
+      },
+      {
+        "path": "treatment-1.txt",
+        "thread_id": "REDACTED"
+      },
+      {
+        "path": "control-2.txt",
+        "thread_id": "REDACTED"
+      },
+      {
+        "path": "treatment-2.txt",
+        "thread_id": "REDACTED"
+      }
+    ]
+  },
+  "requested_producer": {
+    "model": "gpt-5.6-luna",
+    "effort": "xhigh"
+  },
+  "fixture_set": {
+    "name": "fixtures-xhigh-2026-08-26",
+    "metadata": "fixture-set.json",
+    "binding_sha256": "sha256:REDACTED",
+    "schema": "REDACTED.v3"
+  },
+  "treatment_source": "canonical-skill",
+  "evaluator": {
+    "dispatch_helper": {
+      "path": "scripts/lib/codex-exec.sh",
+      "sha256": "sha256:REDACTED"
+    },
+    "harness": {
+      "path": "scripts/probe-skill.sh",
+      "sha256": "sha256:REDACTED"
+    },
+    "metadata_helper": {
+      "path": "scripts/lib/probe-fixture-metadata.py",
+      "sha256": "sha256:REDACTED"
+    },
+    "preamble": {
+      "path": "scripts/lib/preamble.sh",
+      "sha256": "sha256:REDACTED"
+    }
+  },
+  "capture_evaluator": {
+    "dispatch_helper": {
+      "path": "scripts/lib/codex-exec.sh",
+      "sha256": "sha256:REDACTED"
+    },
+    "harness": {
+      "path": "scripts/probe-skill.sh",
+      "sha256": "sha256:REDACTED"
+    },
+    "metadata_helper": {
+      "path": "scripts/lib/probe-fixture-metadata.py",
+      "sha256": "sha256:REDACTED"
+    },
+    "preamble": {
+      "path": "scripts/lib/preamble.sh",
+      "sha256": "sha256:REDACTED"
+    }
+  },
+  "evaluator_matches_capture": false,
+  "honesty": "measures response-shape BEHAVIOR-CHANGE under the exact bound canonical SKILL.md treatment, NOT quality-uplift; small N is directional (ADR-0011)",
+  "schedule": [
+    {
+      "arm": "control",
+      "position": 1,
+      "rep": 1
+    },
+    {
+      "arm": "treatment",
+      "position": 2,
+      "rep": 1
+    },
+    {
+      "arm": "treatment",
+      "position": 3,
+      "rep": 2
+    },
+    {
+      "arm": "control",
+      "position": 4,
+      "rep": 2
+    }
+  ],
+  "scoring": {
+    "discriminator_timeout_seconds": 2,
+    "response_extraction": "codex-jsonl-final-agent-message.v1",
+    "transcript_format": "codex-exec-jsonl.v1"
+  },
+  "control": {
+    "present": 0,
+    "usable": 0,
+    "rate": null
+  },
+  "treatment": {
+    "present": 0,
+    "usable": 0,
+    "rate": null
+  },
+  "verdict": "UNMEASURED",
+  "per_rep": [
+    {
+      "control": "DEGRADED",
+      "rep": 1,
+      "treatment": "DEGRADED"
+    },
+    {
+      "control": "DEGRADED",
+      "rep": 2,
+      "treatment": "DEGRADED"
+    }
+  ]
+}

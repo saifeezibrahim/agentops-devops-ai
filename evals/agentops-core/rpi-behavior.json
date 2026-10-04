@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "id": "agentops-core.rpi-behavior",
+  "name": "AgentOps Lean RPI and Optional Adapter Canary",
+  "description": "Offline structural canary for the lean charter and optional finite repair adapter; native behavior needs task trials.",
+  "practices": [
+    "llm-eval-harness",
+    "agile-manifesto"
+  ],
+  "domain": "rpi",
+  "visibility": "public_canary",
+  "tier": "deterministic",
+  "owners": [
+    "agentops"
+  ],
+  "tags": [
+    "canary",
+    "offline",
+    "rpi",
+    "verdict",
+    "bounded-repair"
+  ],
+  "allowed_runtimes": [
+    "static",
+    "shell"
+  ],
+  "environment": {
+    "offline_required": true,
+    "network": "forbidden",
+    "scrub_env_prefixes": [
+      "AGENTOPS_RPI_RUNTIME",
+      "ANTHROPIC_",
+      "OPENAI_"
+    ],
+    "timeout_seconds": 30
+  },
+  "scoring": {
+    "aggregate_threshold": 1,
+    "dimensions": [
+      {
+        "name": "correctness",
+        "weight": 2,
+        "threshold": 1,
+        "critical": true
+      },
+      {
+        "name": "process_adherence",
+        "weight": 1,
+        "threshold": 1,
+        "critical": true
+      },
+      {
+        "name": "artifact_quality",
+        "weight": 1,
+        "threshold": 1
+      },
+      {
+        "name": "safety",
+        "weight": 1,
+        "threshold": 1,
+        "critical": true
+      }
+    ]
+  },
+  "baseline_policy": {
+    "mode": "compare",
+    "baseline_path": ".agents/evals/baselines/agentops-core.rpi-behavior.baseline.json",
+    "blocking_gate": "none"
+  },
+  "cases": [
+    {
+      "id": "rpi-skill-stop-contract",
+      "title": "Lean RPI owns authorized outcome through checks and fresh judgment",
+      "kind": "artifact_check",
+      "objective": "Keep direct repair, fresh judgment and real bounds in the native charter without mandatory phase worksheets.",
+      "expectations": [
+        {
+          "type": "artifact_contains",
+          "target": "../../skills/rpi/SKILL.md",
+          "value": "Own the authorized outcome through finish."
+        },
+        {
+          "type": "artifact_contains",
+          "target": "../../skills/rpi/SKILL.md",
+          "value": "## Causal stall and bounds"
+        },
+        {
+          "type": "artifact_contains",
+          "target": "../../skills/rpi/SKILL.md",
+          "value": "Do not append a next action"
+        }
+      ],
+      "dimensions": [
+        "process_adherence",
+        "artifact_quality"
+      ],
+      "critical": true
+    },
+    {
+      "id": "core-schema-contract",
+      "title": "RPI status and semantic verdict remain separate",
+      "kind": "command",
+      "objective": "Protect verdict.v2 from orchestration statuses and preserve the standalone RPI report.",
+      "runtime": "shell",
+      "inputs": {
+        "cwd": "../..",
+        "shell": "grep -q NOT_PROVEN schemas/verdict.v2.schema.json && ! grep -q NOT_BUILT schemas/verdict.v2.schema.json && grep -q NOT_BUILT schemas/rpi-report.v1.schema.json"
+      },
+      "expectations": [
+        {
+          "type": "exit_code",
+          "value": 0
+        }
+      ],
+      "dimensions": [
+        "correctness",
+        "artifact_quality"
+      ],
+      "critical": true
+    }
+  ]
+}

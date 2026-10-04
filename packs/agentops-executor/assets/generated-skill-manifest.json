@@ -1,0 +1,98 @@
+{
+  "schema_version": "agentops.gc-skill-projection.v1",
+  "source": "skills",
+  "generator": "scripts/sync-gc-pack.py",
+  "files": [
+    {
+      "source": "skills/implement/SKILL.md",
+      "destination": "packs/agentops-executor/agents/implementer-claude/skills/implement/SKILL.md",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0644"
+    },
+    {
+      "source": "skills/implement/references/implement.feature",
+      "destination": "packs/agentops-executor/agents/implementer-claude/skills/implement/references/implement.feature",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0644"
+    },
+    {
+      "source": "skills/implement/scripts/validate.sh",
+      "destination": "packs/agentops-executor/agents/implementer-claude/skills/implement/scripts/validate.sh",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0755"
+    },
+    {
+      "source": "skills/implement/SKILL.md",
+      "destination": "packs/agentops-executor/agents/implementer/skills/implement/SKILL.md",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0644"
+    },
+    {
+      "source": "skills/implement/references/implement.feature",
+      "destination": "packs/agentops-executor/agents/implementer/skills/implement/references/implement.feature",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0644"
+    },
+    {
+      "source": "skills/implement/scripts/validate.sh",
+      "destination": "packs/agentops-executor/agents/implementer/skills/implement/scripts/validate.sh",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0755"
+    },
+    {
+      "source": "skills/validate/SKILL.md",
+      "destination": "packs/agentops-executor/agents/validator/skills/validate/SKILL.md",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0644"
+    },
+    {
+      "source": "skills/validate/references/validate.feature",
+      "destination": "packs/agentops-executor/agents/validator/skills/validate/references/validate.feature",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0644"
+    },
+    {
+      "source": "skills/validate/scripts/check_contract_corpus.py",
+      "destination": "packs/agentops-executor/agents/validator/skills/validate/scripts/check_contract_corpus.py",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0644"
+    },
+    {
+      "source": "skills/validate/scripts/test_validate.py",
+      "destination": "packs/agentops-executor/agents/validator/skills/validate/scripts/test_validate.py",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0755"
+    },
+    {
+      "source": "skills/validate/scripts/validate.py",
+      "destination": "packs/agentops-executor/agents/validator/skills/validate/scripts/validate.py",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0755"
+    },
+    {
+      "source": "skills/validate/scripts/validate.sh",
+      "destination": "packs/agentops-executor/agents/validator/skills/validate/scripts/validate.sh",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0755"
+    },
+    {
+      "source": "skills/using-gc/SKILL.md",
+      "destination": "packs/agentops-executor/skills/using-gc/SKILL.md",
+      "source_sha256": "REDACTED",
+      "sha256": "REDACTED",
+      "mode": "0644"
+    }
+  ]
+}

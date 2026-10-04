@@ -1,0 +1,38 @@
+{
+  "schema_version": 3,
+  "base_oracle": "v2",
+  "behavioral_source_sha": "REDACTED",
+  "capture_sha": "REDACTED",
+  "projection": "project-v2.jq",
+  "projection_sha256": "REDACTED",
+  "intentional_deltas": [
+    "constraint_default_spine",
+    "constraint_shadow_activation",
+    "membrane_detector_evidence"
+  ],
+  "profiles": {
+    "default": {
+      "tags": [],
+      "sha256": "REDACTED"
+    },
+    "flywheel": {
+      "tags": [
+        "flywheel"
+      ],
+      "sha256": "REDACTED"
+    },
+    "legacy": {
+      "tags": [
+        "legacy"
+      ],
+      "sha256": "REDACTED"
+    },
+    "combined": {
+      "tags": [
+        "flywheel",
+        "legacy"
+      ],
+      "sha256": "REDACTED"
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "name": "REDACTED",
+  "description": "a non-string finding class is rejected by every implementation.",
+  "expected": "invalid",
+  "filename_digest": "REDACTED",
+  "artifact": {
+    "schema_version": "verdict.v2",
+    "acceptance_digest": "REDACTED",
+    "subject_manifest_digest": "REDACTED",
+    "author_context_id": "ctx-author",
+    "validator_context_id": "ctx-validator",
+    "freshness_attestation": null,
+    "verdict": "FAIL",
+    "criteria": [
+      {
+        "id": "c1",
+        "result": "FAIL",
+        "evidence_refs": [
+          "gate:go.build"
+        ],
+        "reason": "checked"
+      }
+    ],
+    "findings": [
+      {
+        "id": "f1",
+        "class": 7,
+        "summary": "the seal is not pinned",
+        "evidence_refs": [
+          "gate:go.build"
+        ]
+      }
+    ],
+    "evidence_refs": [
+      "gate:go.build"
+    ],
+    "checked": [
+      "cli/**"
+    ],
+    "not_checked": [],
+    "validated_at": "2026-09-05T12:00:00Z",
+    "artifact_digest": "REDACTED"
+  }
+}

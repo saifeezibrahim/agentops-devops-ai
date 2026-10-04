@@ -1,0 +1,104 @@
+[workspace]
+max_active_sessions = __GC_MAX_ACTIVE_SESSIONS__
+env = { GC_BIN = "__GC_BIN__", PATH = "__GC_PATH__", AGENTOPS_GC_PRIMARY_RIG_ROOT = "__GC_RIG_ROOT__", AGENTOPS_GC_WORKTREE_ROOT = "__GC_WORKTREE_ROOT__", AGENTOPS_GC_WORKTREE = "__GC_WORKTREE_SCRIPT__", AGENTOPS_GC_REFINER = "__GC_REFINER_SCRIPT__", AGENTOPS_GC_BASE_REF = "__GC_BASE_REF__", AGENTOPS_GC_DELIVERY_MODE = "__GC_DELIVERY_MODE__", AGENTOPS_GC_PLAN_TARGET = "__GC_PLAN_TARGET__", AGENTOPS_GC_TERRA_TARGET = "__GC_TERRA_TARGET__", AGENTOPS_GC_OPUS_TARGET = "__GC_OPUS_TARGET__", AGENTOPS_GC_VALIDATE_TARGET = "__GC_VALIDATE_TARGET__", AGENTOPS_GC_REFINER_TARGET = "__GC_REFINER_TARGET__", GC_OTEL_METRICS_URL = "__GC_OTEL_METRICS_URL__", GC_OTEL_LOGS_URL = "__GC_OTEL_LOGS_URL__", OTEL_EXPORTER_OTLP_ENDPOINT = "", OTEL_SDK_DISABLED = "__GC_OTEL_DISABLED__" }
+
+[daemon]
+patrol_interval = "30s"
+shutdown_timeout = "10s"
+
+[session]
+socket = "__GC_TMUX_SOCKET__"
+setup_timeout = "60s"
+
+[defaults]
+[defaults.rig]
+[defaults.rig.imports]
+[defaults.rig.imports.gc]
+source = "https://github.com/gastownhall/gascity-packs/tree/main/gascity/roles"
+version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
+
+[providers.codex]
+base = "builtin:codex"
+prompt_mode = "none"
+args_append = ["--dangerously-bypass-hook-trust"]
+options_schema_merge = "replace"
+option_defaults = { permission_mode = "auto-edit", model = "gpt-5.6-terra", effort = "high" }
+
+[[providers.codex.options_schema]]
+key = "permission_mode"
+label = "Approval Policy"
+type = "select"
+default = "auto-edit"
+  [[providers.codex.options_schema.choices]]
+  value = "auto-edit"
+  label = "Workspace write, no prompts"
+  flag_args = ["--sandbox", "workspace-write", "--ask-for-approval", "never", "-c", "sandbox_workspace_write.network_access=true"]
+
+[[providers.codex.options_schema]]
+key = "model"
+label = "Role model"
+type = "select"
+default = "gpt-5.6-terra"
+  [[providers.codex.options_schema.choices]]
+  value = "gpt-5.6-terra"
+  label = "Terra"
+  flag_args = ["--model", "gpt-5.6-terra"]
+  [[providers.codex.options_schema.choices]]
+  value = "gpt-5.6-sol"
+  label = "Sol"
+  flag_args = ["--model", "gpt-5.6-sol"]
+
+[[providers.codex.options_schema]]
+key = "effort"
+label = "Reasoning effort"
+type = "select"
+default = "high"
+  [[providers.codex.options_schema.choices]]
+  value = "high"
+  label = "High"
+  flag_args = ["-c", "model_reasoning_effort=high"]
+
+[providers.claude]
+base = "builtin:claude"
+path_check = "claude"
+print_args = []
+options_schema_merge = "replace"
+option_defaults = { permission_mode = "unrestricted", model = "opus-4.8", effort = "medium" }
+
+[[providers.claude.options_schema]]
+key = "permission_mode"
+label = "Permission mode"
+type = "select"
+default = "unrestricted"
+  [[providers.claude.options_schema.choices]]
+  value = "unrestricted"
+  label = "Managed unrestricted"
+  flag_args = ["--dangerously-skip-permissions"]
+
+[[providers.claude.options_schema]]
+key = "model"
+label = "Role model"
+type = "select"
+default = "opus-4.8"
+  [[providers.claude.options_schema.choices]]
+  value = "opus-4.8"
+  label = "Opus"
+  flag_args = ["--model", "claude-opus-4-8"]
+  [[providers.claude.options_schema.choices]]
+  value = "fable-5"
+  label = "Fable"
+  flag_args = ["--model", "claude-fable-5"]
+
+[[providers.claude.options_schema]]
+key = "effort"
+label = "Reasoning policy"
+type = "select"
+default = "medium"
+  [[providers.claude.options_schema.choices]]
+  value = "medium"
+  label = "Medium"
+  flag_args = ["--effort", "medium"]
+  [[providers.claude.options_schema.choices]]
+  value = "adaptive"
+  label = "Adaptive"
+  flag_args = []

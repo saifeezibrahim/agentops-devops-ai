@@ -1,0 +1,5 @@
+# scripts/.scripts-ao-invocations-baseline
+# Retired-command waiver tombstone for check-scripts-ao-invocations.sh.
+#
+# Active entries are forbidden: every supported script invocation must resolve
+# against the compiled current ao command tree. Keep this file comment-only.

@@ -1,0 +1,416 @@
+#!/usr/bin/env bats
+# age-bhsz + age-wnyt — contract for the PreToolUse policy dispatcher and the
+# day-1 enforce cohort (git-add-_beads, ledger hand-append, cp-into-skills).
+#
+# GWT from the bead: GIVEN a registered deny policy and a matching tool call,
+# WHEN the dispatcher runs, THEN the call blocks (exit 2) with the routing
+# message and a telemetry line records it; GIVEN audit mode, THEN the call
+# proceeds and only the events record.
+#
+# Fixture fidelity: every case round-trips the REAL PreToolUse JSON input shape
+# (tool_name / tool_input / session_id) built with jq — never a hand-built
+# string — matching the harness contract in https://code.claude.com/docs/en/hooks.
+
+DISPATCH="${DISPATCH:-$BATS_TEST_DIRNAME/../../hooks/guards/hooks/policy-dispatch.sh}"
+LINT="${LINT:-$BATS_TEST_DIRNAME/../../hooks/guards/scripts/lint-policies.sh}"
+REGISTRY="${REGISTRY:-$BATS_TEST_DIRNAME/../../hooks/guards/policies/policies.json}"
+
+setup() {
+  export TMPDIR="$(mktemp -d)"
+  export AGENTOPS_GUARDRAIL_TELEMETRY="$TMPDIR/telemetry.jsonl"
+  export AOP_POLICIES="$REGISTRY"
+  export AOP_WAIVER_FILE="$TMPDIR/waivers"
+  unset AOP_WAIVE || true
+}
+teardown() { rm -rf "$TMPDIR"; }
+
+# $1 = tool_name, $2 = field (command|file_path), $3 = value, $4 = session id
+run_dispatch() {
+  jq -nc --arg tool "$1" --arg k "$2" --arg v "$3" \
+    --arg s "${4:-sess-$RANDOM-$BATS_TEST_NUMBER}" \
+    '{tool_name:$tool, tool_input:{($k):$v}, session_id:$s}' \
+    | bash "$DISPATCH"
+}
+
+telemetry_lines() {
+  [ -f "$AGENTOPS_GUARDRAIL_TELEMETRY" ] || { echo 0; return; }
+  wc -l < "$AGENTOPS_GUARDRAIL_TELEMETRY" | tr -d ' '
+}
+
+# ---------- registry hygiene ------------------------------------------------
+
+@test "lint: shipped registry passes the v2 contract" {
+  run bash "$LINT" "$REGISTRY"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"OK"* ]]
+}
+
+@test "lint: a non-pure predicate in deny mode is rejected (predicate discipline)" {
+  bad="$TMPDIR/bad.json"
+  jq '.policies[0].predicate_class = "stateful"' "$REGISTRY" > "$bad"
+  run bash "$LINT" "$bad"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"predicate discipline"* ]]
+}
+
+# ---------- policy (a): core.git:add-beads-ledger ---------------------------
+
+@test "FIRE deny: git add _beads/issues.jsonl blocks with route message + telemetry" {
+  run run_dispatch Bash command "git add _beads/issues.jsonl"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"core.git:add-beads-ledger"* ]]
+  [[ "$output" == *"pushing the ledger repo itself"* ]]
+  [ "$(telemetry_lines)" -eq 1 ]
+  run jq -r '.token_class + " " + .decision' "$AGENTOPS_GUARDRAIL_TELEMETRY"
+  [ "$output" = "core.git:add-beads-ledger deny" ]
+}
+
+@test "FIRE deny: chained 'cd x && git add _beads' still blocks" {
+  run run_dispatch Bash command "cd /tmp/x && git add _beads"
+  [ "$status" -eq 2 ]
+}
+
+@test "SILENT: git add of a normal path — exit 0, zero output, zero telemetry" {
+  run run_dispatch Bash command "git add docs/research/notes.md"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(telemetry_lines)" -eq 0 ]
+}
+
+@test "SILENT: _beads mentioned outside a git add segment does not fire" {
+  run run_dispatch Bash command "grep -r _beads docs/ && git add docs/a.md"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "SILENT: git add of a file merely containing the substring (my_beadsfile) does not fire" {
+  run run_dispatch Bash command "git add src/my_beadsfile.go"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+# ---------- policy (b): core.provenance:ledger-hand-append ------------------
+
+@test "FIRE deny: >> redirect onto the provenance ledger blocks, routes to provenance add" {
+  run run_dispatch Bash command "echo '{}' >> docs/provenance/ledger.jsonl"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ao provenance add"* ]]
+  [ "$(telemetry_lines)" -eq 1 ]
+}
+
+@test "FIRE deny: tee -a onto the provenance ledger blocks" {
+  run run_dispatch Bash command "some-cmd | tee -a docs/provenance/ledger.jsonl"
+  [ "$status" -eq 2 ]
+}
+
+@test "FIRE deny: Write tool targeting the ledger file_path blocks" {
+  run run_dispatch Write file_path "docs/provenance/ledger.jsonl"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"core.provenance:ledger-hand-append"* ]]
+}
+
+@test "SILENT: reading the ledger (jq, no redirect) does not fire" {
+  run run_dispatch Bash command "jq -r '.hash' docs/provenance/ledger.jsonl | tail -1"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "SILENT: the owning append command itself does not fire" {
+  run run_dispatch Bash command "./cli/bin/ao provenance add decision-1 artifact-2 --relation wasGeneratedBy"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+# ---------- policy (c): core.skills:copy-into-installed ---------------------
+
+@test "FIRE deny: cp -r into ~/.claude/skills blocks, routes to ao skills link" {
+  run run_dispatch Bash command "cp -r skills/foo $HOME/.claude/skills/"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ao skills link"* ]]
+}
+
+@test "FIRE deny: rsync into ~/.codex/skills/foo blocks" {
+  run run_dispatch Bash command "rsync -a build/ $HOME/.codex/skills/foo"
+  [ "$status" -eq 2 ]
+}
+
+# ---------- policy (d): core.skills:edit-installed-copy ---------------------
+
+@test "FIRE deny: Edit of an installed skill copy blocks, routes to repo skills/" {
+  run run_dispatch Edit file_path "$HOME/.claude/skills/evolve/SKILL.md"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"core.skills:edit-installed-copy"* ]]
+  [[ "$output" == *"INSTALLED skill copy"* ]]
+}
+
+@test "SILENT: Edit of a repo skills/ source path does not fire" {
+  run run_dispatch Edit file_path "/Users/dev/agentops/README.md"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+# ---------- policy (e): core.verdicts:hand-edit -----------------------------
+#
+# The USER-facing invariant, not a maintainer artifact: a verdict under
+# .agents/ao/verdicts/ is content-addressed evidence whose filename IS the
+# SHA-256 of its own canonical content. A hand edit silently breaks that
+# identity — the file keeps the old digest name while holding new bytes, so
+# every downstream consumer reads a verdict that no longer verifies.
+
+@test "FIRE deny: Write into .agents/ao/verdicts/ blocks with the digest-identity message" {
+  run run_dispatch Write file_path ".agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"core.verdicts:hand-edit"* ]]
+  [[ "$output" == *"content-addressed evidence"* ]]
+  [ "$(telemetry_lines)" -eq 1 ]
+  run jq -r '.token_class + " " + .decision' "$AGENTOPS_GUARDRAIL_TELEMETRY"
+  [ "$output" = "core.verdicts:hand-edit deny" ]
+}
+
+@test "FIRE deny: Edit of an absolute verdict path blocks" {
+  run run_dispatch Edit file_path "/Users/dev/agentops/.agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"core.verdicts:hand-edit"* ]]
+}
+
+@test "FIRE deny: >> append into a verdict file blocks" {
+  run run_dispatch Bash command "echo '{}' >> .agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"re-run validation"* ]]
+}
+
+@test "FIRE deny: > truncating redirect onto a verdict file blocks" {
+  run run_dispatch Bash command "jq '.result = \"PASS\"' in.json > .agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 2 ]
+}
+
+@test "FIRE deny: sed -i in-place edit of a verdict blocks" {
+  run run_dispatch Bash command "sed -i '' 's/FAIL/PASS/' .agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"core.verdicts:hand-edit"* ]]
+}
+
+@test "FIRE deny: perl -pi in-place edit of a verdict blocks" {
+  run run_dispatch Bash command "perl -pi -e 's/FAIL/PASS/' /repo/.agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"core.verdicts:hand-edit"* ]]
+}
+
+@test "FIRE deny: perl -pibak bundled in-place cluster with attached backup extension blocks" {
+  run run_dispatch Bash command "perl -pibak -e 's/FAIL/PASS/' .agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"core.verdicts:hand-edit"* ]]
+}
+
+@test "FIRE deny: rm of a verdict blocks" {
+  run run_dispatch Bash command "rm -f .agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"core.verdicts:hand-edit"* ]]
+}
+
+@test "PASS allow: sed READ of a verdict (script text contains -input, no -i flag) stays silent" {
+  run run_dispatch Bash command "sed 's/-input//' .agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "PASS allow: rm elsewhere while a verdict path is only mentioned after && stays silent" {
+  run run_dispatch Bash command "rm -f /tmp/scratch.json && ls .agents/ao/verdicts/"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "FIRE deny: tee into the verdicts store blocks" {
+  run run_dispatch Bash command "cat draft.json | tee .agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 2 ]
+}
+
+@test "FIRE deny: cp of a hand-made file INTO the verdicts store blocks" {
+  run run_dispatch Bash command "cp /tmp/handmade.json .agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 2 ]
+}
+
+@test "FIRE deny: mv INTO the verdicts store blocks" {
+  run run_dispatch Bash command "mv /tmp/handmade.json .agents/ao/verdicts/sha256/"
+  [ "$status" -eq 2 ]
+}
+
+@test "SILENT: reading a verdict (cat) does not fire" {
+  run run_dispatch Bash command "cat .agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(telemetry_lines)" -eq 0 ]
+}
+
+@test "SILENT: listing and jq-reading the verdicts store does not fire" {
+  run run_dispatch Bash command "ls .agents/ao/verdicts/sha256 && jq -r '.result' .agents/ao/verdicts/sha256/abc123.json"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "SILENT: reading a verdict and redirecting the READ elsewhere does not fire" {
+  run run_dispatch Bash command "jq . .agents/ao/verdicts/sha256/abc123.json > /tmp/pretty.json"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "SILENT: the sanctioned writer (ao provenance store-verdict) does not fire" {
+  run run_dispatch Bash command "ao provenance store-verdict --root . --evidence-root /protected/evidence --draft draft.json --intent-source intent.md --subject-manifest manifest.json --author-context-id a --validator-context-id b --freshness-source runtime --freshness-attester-id r --scope-result PASS"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "SILENT: the sanctioned writer naming --evidence-root explicitly does not fire" {
+  run run_dispatch Bash command "ao provenance store-verdict --draft draft.json --evidence-root .agents/ao/verdicts/sha256 --scope-result PASS"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "SILENT: writing the intents store is allowed (only verdicts are sealed)" {
+  run run_dispatch Write file_path ".agents/ao/intents/sha256/abc123.intent"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  run run_dispatch Bash command "echo '{}' > .agents/ao/intents/sha256/abc123.intent"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "SILENT: copying a verdict OUT of the store does not fire" {
+  run run_dispatch Bash command "cp .agents/ao/verdicts/sha256/abc123.json /tmp/inspect.json"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+# ---------- plugin layout -----------------------------------------------------
+
+@test "plugin layout: dispatcher resolves ../policies/policies.json without AOP_POLICIES" {
+  plugin="$TMPDIR/plugin/hooks/guards"
+  mkdir -p "$plugin"
+  cp -R "$BATS_TEST_DIRNAME/../../hooks/guards/hooks" "$plugin/hooks"
+  cp -R "$BATS_TEST_DIRNAME/../../hooks/guards/policies" "$plugin/policies"
+  run bash -c 'unset AOP_POLICIES; jq -nc "{tool_name:\"Bash\", tool_input:{command:\"git add _beads/x\"}, session_id:\"plugin-sess\"}" | bash "$1/hooks/policy-dispatch.sh"' _ "$plugin"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"core.git:add-beads-ledger"* ]]
+}
+
+@test "SILENT: copying FROM an installed skills dir OUT to the repo does not fire" {
+  run run_dispatch Bash command "cp $HOME/.claude/skills/foo/SKILL.md /tmp/inspect.md"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+# ---------- dispatcher mechanics -------------------------------------------
+
+@test "deny on second attempt in the same session STILL blocks (short message)" {
+  sid="same-session-$BATS_TEST_NUMBER"
+  run run_dispatch Bash command "git add _beads/x" "$sid"
+  [ "$status" -eq 2 ]
+  run run_dispatch Bash command "git add _beads/x" "$sid"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"blocked"* ]]
+}
+
+@test "waiver via AOP_WAIVE allows the call and records decision=waived" {
+  AOP_WAIVE="core.git:add-beads-ledger" run run_dispatch Bash command "git add _beads/x"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  run jq -r '.decision' "$AGENTOPS_GUARDRAIL_TELEMETRY"
+  [ "$output" = "waived" ]
+}
+
+@test "waiver file with unexpired entry allows the call" {
+  echo "core.git:add-beads-ledger $(( $(date +%s) + 3600 ))" > "$AOP_WAIVER_FILE"
+  run run_dispatch Bash command "git add _beads/x"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "waiver file with EXPIRED entry still blocks" {
+  echo "core.git:add-beads-ledger $(( $(date +%s) - 10 ))" > "$AOP_WAIVER_FILE"
+  run run_dispatch Bash command "git add _beads/x"
+  [ "$status" -eq 2 ]
+}
+
+@test "audit mode: call proceeds silently and only the telemetry records" {
+  audited="$TMPDIR/audited.json"
+  jq '.policies |= map(if .id == "core.git:add-beads-ledger" then .mode = "audit" else . end)' \
+    "$REGISTRY" > "$audited"
+  AOP_POLICIES="$audited" run run_dispatch Bash command "git add _beads/x"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  run jq -r '.decision' "$AGENTOPS_GUARDRAIL_TELEMETRY"
+  [ "$output" = "audit" ]
+}
+
+@test "route mode: exit 0 with permissionDecision ask JSON on stdout" {
+  routed="$TMPDIR/routed.json"
+  jq '.policies |= map(if .id == "core.git:add-beads-ledger" then .mode = "route" else . end)' \
+    "$REGISTRY" > "$routed"
+  AOP_POLICIES="$routed" run run_dispatch Bash command "git add _beads/x"
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.hookSpecificOutput.permissionDecision == "ask"'
+}
+
+@test "stray-stdout hazard: every exit-0 path emits NOTHING on stdout (non-route)" {
+  for cmd in "ls -la" "git status" "echo hello"; do
+    run run_dispatch Bash command "$cmd"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+  done
+}
+
+@test "unmatched tool (Read) is silent even with a matching-looking input" {
+  run run_dispatch Read command "git add _beads/x"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "missing registry fails OPEN (exit 0, silent)" {
+  AOP_POLICIES="$TMPDIR/does-not-exist.json" run run_dispatch Bash command "git add _beads/x"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "telemetry hashes the matched value — raw command never lands in the file" {
+  run run_dispatch Bash command "git add _beads/issues.jsonl"
+  [ "$status" -eq 2 ]
+  ! grep -q "issues.jsonl" "$AGENTOPS_GUARDRAIL_TELEMETRY"
+  run jq -r '.path_sha256 | length' "$AGENTOPS_GUARDRAIL_TELEMETRY"
+  [ "$output" = "64" ]
+}
+
+# ---------- plugin hook manifest ----------------------------------------------
+# ADR-0002 (no default prompt injection): injection hooks (SessionStart/UserPromptSubmit
+# context stuffing) stay dead; only enforcement events ship. Assert the event
+# keys of the shipped plugin manifest, not doc wording. A denylist, not an exact
+# key set, so a future enforcement event (e.g. PostToolUse) needs no edit here.
+MANIFEST="${MANIFEST:-$BATS_TEST_DIRNAME/../../hooks/hooks.json}"
+INJECTION_EVENTS='["SessionStart","SessionEnd","UserPromptSubmit","PreCompact"]'
+
+# $1 = hooks manifest; prints each registered injection event, one per line.
+# Errors (non-zero) when .hooks is not an object, so the check cannot pass vacuously.
+injection_events() {
+  jq -r --argjson deny "$INJECTION_EVENTS" \
+    '.hooks | if type == "object" then keys[] else error("hooks is not an object") end
+     | select(. as $e | $deny | any(. == $e))' "$1"
+}
+
+@test "plugin manifest: hooks/hooks.json registers no session-injection hook event" {
+  run injection_events "$MANIFEST"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "plugin manifest: an injection event added to the shipped manifest is reported" {
+  jq '.hooks.SessionStart = .hooks.PreToolUse' "$MANIFEST" > "$TMPDIR/hooks.json"
+  run injection_events "$TMPDIR/hooks.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "SessionStart" ]
+}
+
+@test "plugin manifest: a manifest without a hooks object fails the check" {
+  jq '{hooks: [.hooks]}' "$MANIFEST" > "$TMPDIR/hooks.json"
+  run injection_events "$TMPDIR/hooks.json"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"hooks is not an object"* ]]
+}

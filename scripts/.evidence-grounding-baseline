@@ -1,0 +1,39 @@
+# Filename-pinned baseline for scripts/check-evidence-grounding.sh (gate evidence.grounding).
+#
+# Every entry below is a point-in-time evidence document whose citations were
+# TRUE WHEN WRITTEN and whose subject has since moved. An entry is an exact doc
+# path or a directory prefix ending in `/`, and carries its class tag as a
+# trailing comment. Enforcement is two-way and shrink-only: a NEW uncovered
+# offender fails, and an entry that stops covering any finding fails until it is
+# pruned. Pinning the archive silences history, never a citation written today —
+# a finding on a line ADDED since BASE_REF is not excused by this file.
+#
+# Seeded 2026-08-26 from the tree at 8cdcb5a90: 618 findings across 45 keys.
+#
+# 2026-09-03: every entry was pruned in the archival sweep that removed
+# docs/audits/** (except docs/audits/manifests/) and docs/evidence/**.md from
+# the tree; git history is the archive. The file stays as the declared,
+# empty baseline: the gate still fails on any NEW uncovered finding, and any
+# entry added here must carry its class tag and argument.
+#
+# The classes, and why each is pinned rather than fixed:
+#
+#   dated-recon-snapshot  A recon/audit run captured the tree on a named date.
+#                         Its file inventory IS the record; rewriting the paths
+#                         would falsify the snapshot.
+#   dated-audit           A dated audit or readiness review of a surface that
+#                         has since been refactored or retired.
+#   dated-duel            A dated multi-model duel/review corpus, including raw
+#                         model transcripts that must stay byte-faithful.
+#   foreign-repo          Cites paths and commit ids belonging to ANOTHER
+#                         repository (Gas City); they never resolve here and are
+#                         not supposed to.
+#   pre-push-receipt      A per-bead pre-push receipt naming the files that bead
+#                         touched. A later refactor moves or deletes them; the
+#                         receipt still records what was true at push time.
+#   orphaned-generator    KNOWN LIVE DEFECT, surfaced not fixed: the doc claims
+#                         a generator that no longer exists in the tree. Fixing
+#                         it means deciding the doc's fate, which belongs to a
+#                         change that owns docs/evidence/**, not to this gate.
+# 2026-06-07 ag-qidx handoff: its 'pick up here' list names lib/common.sh, a planned file that was never created; the record stays as written.
+docs/handoffs/2026-06-07-ag-qidx-postmortem.md # dated-audit

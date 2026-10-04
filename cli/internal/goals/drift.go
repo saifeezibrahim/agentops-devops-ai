@@ -1,0 +1,109 @@
+package goals
+
+import (
+	"cmp"
+	"slices"
+)
+
+// Drift delta classification constants.
+const (
+	deltaImproved  = "improved"
+	deltaRegressed = "regressed"
+	deltaUnchanged = "unchanged"
+)
+
+// Goal measurement result constants.
+const (
+	resultPass = "pass"
+	resultFail = "fail"
+	resultSkip = "skip"
+)
+
+// DriftResult describes how a single goal changed between two snapshots.
+type DriftResult struct {
+	GoalID     string   `json:"goal_id"`
+	Before     string   `json:"before"`
+	After      string   `json:"after"`
+	Delta      string   `json:"delta"` // "improved", "regressed", "unchanged"
+	ValueDelta *float64 `json:"value_delta,omitempty"`
+	Weight     int      `json:"weight"`
+}
+
+// ComputeDrift compares a baseline snapshot against a current snapshot and
+// returns a DriftResult per goal in the current snapshot. Results are sorted
+// with regressions first (by weight descending), then improvements, then unchanged.
+func ComputeDrift(baseline, current *Snapshot) []DriftResult {
+	baseMap := make(map[string]Measurement, len(baseline.Goals))
+	for _, m := range baseline.Goals {
+		baseMap[m.GoalID] = m
+	}
+
+	results := make([]DriftResult, 0, len(current.Goals))
+	for _, cur := range current.Goals {
+		results = append(results, computeGoalDrift(cur, baseMap))
+	}
+
+	slices.SortFunc(results, func(a, b DriftResult) int {
+		if c := cmp.Compare(deltaRank(a.Delta), deltaRank(b.Delta)); c != 0 {
+			return c
+		}
+		return cmp.Compare(b.Weight, a.Weight)
+	})
+
+	return results
+}
+
+// classifyDelta determines the drift direction between two results.
+func classifyDelta(before, after string) string {
+	switch {
+	case before == resultFail && after == resultPass:
+		return deltaImproved
+	case before == resultPass && after == resultFail:
+		return deltaRegressed
+	default:
+		return deltaUnchanged
+	}
+}
+
+// computeValueDelta returns a pointer to the numeric difference between two
+// optional values, or nil if either is nil.
+func computeValueDelta(baseVal, curVal *float64) *float64 {
+	if baseVal != nil && curVal != nil {
+		vd := *curVal - *baseVal
+		return &vd
+	}
+	return nil
+}
+
+// computeGoalDrift computes the drift result for a single goal measurement.
+func computeGoalDrift(cur Measurement, baseMap map[string]Measurement) DriftResult {
+	dr := DriftResult{
+		GoalID: cur.GoalID,
+		After:  cur.Result,
+		Weight: cur.Weight,
+	}
+
+	base, found := baseMap[cur.GoalID]
+	if !found {
+		dr.Before = "new"
+		dr.Delta = deltaUnchanged
+		return dr
+	}
+
+	dr.Before = base.Result
+	dr.Delta = classifyDelta(base.Result, cur.Result)
+	dr.ValueDelta = computeValueDelta(base.Value, cur.Value)
+	return dr
+}
+
+// deltaRank returns a sort key: regressed=0, improved=1, unchanged=2.
+func deltaRank(delta string) int {
+	switch delta {
+	case deltaRegressed:
+		return 0
+	case deltaImproved:
+		return 1
+	default:
+		return 2
+	}
+}

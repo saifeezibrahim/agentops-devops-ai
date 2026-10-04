@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "family": "flywheel",
+  "freeze_sha": "REDACTED",
+  "ownership_sha256": "REDACTED",
+  "migration_state": "retired",
+  "accepted_sha": "REDACTED"
+}
